@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Passport</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="head">
+    <span class="brand">🔐 Passport</span>
+    <div class="head-actions">
+      <button id="lock" class="icon-button" type="button" title="ロックする" hidden>🔒</button>
+      <button id="settings" class="icon-button" type="button" title="設定">⚙️</button>
+    </div>
+  </header>
+
+  <!-- サーバー未設定 -->
+  <section id="view-setup" hidden>
+    <p class="hint">
+      まず Passport サーバーの場所を教えてください。
+    </p>
+    <button id="open-options" class="button primary" type="button">設定を開く</button>
+  </section>
+
+  <!-- ログイン -->
+  <section id="view-login" hidden>
+    <form id="login-form" autocomplete="off">
+      <label for="username">ユーザー名</label>
+      <input id="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="password">パスワード</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" hidden></p>
+      <button class="button primary" type="submit">ログイン</button>
+    </form>
+    <p class="hint small" id="server-label"></p>
+  </section>
+
+  <!-- 一覧 -->
+  <section id="view-list" hidden>
+    <div class="site">
+      <span id="site-host" class="site-host">—</span>
+      <span id="site-count" class="site-count"></span>
+    </div>
+
+    <input id="search" type="search" placeholder="ほかを探す（タイトル・ユーザー名・URL）" autocomplete="off">
+
+    <ul id="items" class="items"></ul>
+
+    <p id="empty" class="hint" hidden>
+      このサイトに使えるものは見つかりませんでした。<br>
+      上の欄で探すか、金庫に URL を登録してください。
+    </p>
+    <p id="list-error" class="error" hidden></p>
+  </section>
+
+  <footer class="foot">
+    <span id="status" class="status"></span>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

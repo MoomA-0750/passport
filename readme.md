@@ -31,19 +31,102 @@ scrypt、HMAC が入っているので、1Password 相当の鍵階層はこれ�
 - ユーザーアカウント（アプリ内で完結。招待も初期パスワードの発行も管理画面から）
 - 複数の Vault と、**Vault 単位の共有**（owner / editor / viewer）
 - ログイン情報・サーバー・カード・セキュアメモの保存
-- パスワード、TOTP シークレット、セキュアメモ、カスタムフィールドの暗号化
+- **SSH 鍵の管理**（貼り付け・生成・公開鍵とフィンガープリントの自動割り出し・authorized_keys 用の1行）
+- **Chrome 拡張**（見ているサイトのログイン情報を探して入力、パスワードと TOTP のコピー）
+- パスワード、TOTP シークレット、セキュアメモ、SSH 秘密鍵、カスタムフィールドの暗号化
 - TOTP（ワンタイムパスワード）の表示
 - パスワード生成器と強度の目安
 - タイトル・ユーザー名・URL・タグの横断検索
 - 監査ログ（誰がいつどのアイテムのどのフィールドを見たか）
 - 無操作での画面ロック
 
+## SSH 鍵
+
+アイテムの種別に「SSH 鍵」がある。
+
+- 手元の鍵を貼る（OpenSSH 形式・PEM 形式どちらでも）か、その場で作る（ed25519 / RSA 3072 / RSA 4096）
+- 貼るか作るかすると、**鍵種別・ビット数・公開鍵・フィンガープリントが自動で埋まる**
+- **パスフレーズが掛かったままの鍵でも登録できる。** OpenSSH 形式は暗号化されていても
+  公開鍵の部分が平文なので、パスフレーズを預けなくてもフィンガープリントまで取れる
+- 秘密鍵とパスフレーズは暗号化して保管。公開鍵とフィンガープリントは平文
+  （公開してよいものだし、一覧で見比べたり authorized_keys へ貼るのに毎回復号したくない）
+- 詳細画面から、公開鍵のコピー、authorized_keys 用の1行のコピー、秘密鍵のファイル保存ができる
+- フィンガープリントで検索できる（「このサーバーに入っている鍵はどれだ」を探すため）
+
+Node は OpenSSH 形式の秘密鍵を読めない（`createPrivateKey` が
+`DECODER routines::unsupported` で落ちる）ので、`lib/sshkeys.js` で
+OpenSSH のワイヤ形式を自前で読み書きしている。
+作った鍵が本物として通用することは、`ssh-keygen -y` に読ませて公開鍵が一致するかで確かめている
+（`test/sshkeys.test.js`）。
+
+生成した鍵にパスフレーズは掛けていない。掛けるには bcrypt_pbkdf が要り、標準ライブラリだけでは重い。
+Passport 側が保管時に暗号化しているので、掛けたい場合は取り出したあとに
+`ssh-keygen -p -f <ファイル>` を使う。
+
+## Chrome 拡張
+
+`extension/` にある。見ているサイトのログイン情報を探して、フォームに入れる。
+
+### 入れ方
+
+1. Chrome で `chrome://extensions` を開き、右上の「デベロッパーモード」を入れる
+2. 「パッケージ化されていない拡張機能を読み込む」で `extension/` を選ぶ
+3. 拡張の ID が `iookbapfomcndnncbdohnhblclbhmfoc` になっていることを確認する
+   （`manifest.json` の `key` で固定してあるので、この値になる）
+4. 拡張の「⚙️」から Passport サーバーの URL を入れて保存する
+   （そのサーバーへ通信する許可をここで求められる）
+5. ツールバーのアイコン（または Ctrl+Shift+L）から金庫にログインする
+
+サーバー側は `passport.ini` の `[extension] allowedIds` がこの ID を許可している必要がある。
+既定値のままなら一致している。
+
+> `--load-extension` のコマンドライン指定は、製品版 Chrome では無視される
+> （`--load-extension is not allowed in Google Chrome` と出る）。
+> 上の手順どおり画面から読み込むこと。自動テストは Chromium で動かしている。
+
+### 認証のしかた
+
+拡張は Cookie ではなく `Authorization: Bearer <トークン>` を使う。
+
+Cookie にすると、金庫にログイン中のブラウザで開いた別サイトから API を叩ける経路ができてしまう
+（サーバーは拡張からの呼び出しに CSRF 検証をしないため）。
+Bearer なら、トークンを持っている拡張からしか通らない。
+
+- トークンを返すのは、**許可した拡張の Origin から来たログインだけ**。画面には返さない
+  （画面は HttpOnly Cookie で動いているので、JavaScript から読めるトークンを渡すとその守りを外すことになる）
+- トークンの置き場は `chrome.storage.session`。ブラウザを閉じると消える
+- CORS は許可した拡張 ID にだけ返し、`Allow-Credentials` は付けない
+
+### この拡張がしないこと
+
+- **ページを開いただけでは何もしない。** 入力はボタンを押したときだけ（`activeTab` 権限）。
+  常駐する content script を置いていないので、拡張が勝手にページを読むことはない
+- **フォームを勝手に送信しない。** 入れるところまでで止める
+- **見えていない入力欄には入れない。** 隠しフォームで持っていかれるのを避けるため
+- パスワードを拡張側に保存しない
+
+### どのアイテムを出すか
+
+今見ているホストと、アイテムに登録された URL のホストを突き合わせる。
+
+| 登録された URL | 見ているサイト | 出るか |
+|---|---|---|
+| `example.local` | `example.local` | 出る（完全一致） |
+| `example.local` | `git.example.local` | 出る（サブドメイン） |
+| `git.example.local` | `example.local` | **出ない** |
+| `example.local` | `example.local.attacker.test` | **出ない** |
+| `example.local` | `notexample.local` | **出ない** |
+
+誤爆は「別のサイトへパスワードを差し出すこと」なので、判定は厳しめに倒している。
+
 ## まだ無いもの
 
 - バックアップとリストアの仕組み（`tar` を呼ぶだけだが未実装）
 - 1Password / CSV からのインポートと、エクスポート
 - パスワードの使い回し・古さのチェック
-- ブラウザ拡張や自動入力（作らない。社内の運用範囲を超える）
+- 拡張からの新規保存（今は読み取りと入力だけ。金庫への登録は画面から）
+- 拡張のショートカットからの直接入力（popup を開く操作を起点にしている。
+  常時どのページにも入れる権限を持たせないため）
 - E2E 暗号（今は採っていない。理由と将来の移行先は `docs/crypto.md`）
 
 ## セキュリティの立ち位置
@@ -84,14 +167,23 @@ key-box/
 │   ├── vaults.js           # Vault、鍵の包み、メンバーシップと権限
 │   ├── items.js            # アイテムと秘密フィールド
 │   ├── totp.js             # RFC 6238
+│   ├── sshkeys.js          # OpenSSH 形式の読み書き、鍵の生成、フィンガープリント
 │   ├── audit.js            # 追記専用の監査ログ
 │   └── api.js              # JSON API
 ├── templates/              # layout / login / setup / app / admin
 ├── static/                 # style.css, common.js, app.js, admin.js, Bootstrap
+├── extension/              # Chrome 拡張（MV3）
+│   ├── manifest.json       # key で拡張IDを固定している
+│   ├── popup.html/.js/.css # ログインと一覧
+│   ├── options.html/.js    # サーバーの場所の設定
+│   ├── api.js              # Bearer トークンでのやり取り
+│   ├── fill.js             # ページへ注入する入力処理
+│   └── background.js       # service worker（起動時にロック）
 ├── bin/
 │   ├── init-master-key.js  # マスターキーの作成
-│   └── make-cert.js        # 自己署名証明書の作成（openssl を呼ぶ）
-├── test/core.test.js       # node --test test/core.test.js
+│   ├── make-cert.js        # 自己署名証明書の作成（openssl を呼ぶ）
+│   └── make-icons.js       # 拡張のアイコン（PNG を自前で書き出す）
+├── test/                   # node --test test/
 ├── docs/crypto.md          # 暗号設計と脅威モデル
 └── data/                   # 利用者のデータ（.gitignore 対象）
     ├── users/<id>.json
@@ -175,8 +267,11 @@ node server.js
 ## テスト
 
 ```bash
-node --test test/core.test.js
+node --test
 ```
+
+（`node --test test/` はディレクトリをモジュールとして読もうとして失敗する。
+引数なしか `node --test test/*.test.js` を使う）
 
 確かめているのは主にこれ:
 
@@ -188,6 +283,11 @@ node --test test/core.test.js
 - 最後の owner は外せない
 - 監査ログに秘密そのものが載らない
 - TOTP が RFC 6238 のテストベクタと一致する
+- 生成した SSH 秘密鍵を `ssh-keygen -y` が読めて、公開鍵とフィンガープリントが一致する
+- パスフレーズ付きの鍵でも、パスフレーズ無しで公開鍵を取り出せる
+- SSH 秘密鍵とパスフレーズがディスクに平文で残らない
+- オートフィルの照合が、別ドメインや親子逆転に釣られない
+- 許可していない拡張 ID には CORS ヘッダーを返さない
 
 ## 既知の制約
 

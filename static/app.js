@@ -106,7 +106,7 @@ function renderVaults() {
 
 // --- 描画: アイテム一覧 -----------------------------------------------------
 
-const TYPE_ICONS = { login: '🔑', server: '🖥️', card: '💳', note: '📝' };
+const TYPE_ICONS = { login: '🔑', server: '🖥️', card: '💳', note: '📝', sshkey: '🗝️' };
 
 function renderItems({ searching = false }) {
   const vault = currentVault();
@@ -145,7 +145,11 @@ function renderItems({ searching = false }) {
             ${item.favorite ? '<span class="item-fav">★</span>' : ''}${escapeHtml(item.title)}
           </span>
           <span class="item-sub">
-            ${escapeHtml(item.username || (item.urls && item.urls[0]) || '')}
+            ${escapeHtml(
+              item.type === 'sshkey' && item.sshKey
+                ? `${item.sshKey.keyType} ${item.sshKey.fingerprint}`
+                : (item.username || (item.urls && item.urls[0]) || '')
+            )}
             ${item.vaultName ? `<span class="badge bg-light text-dark ms-1">${escapeHtml(item.vaultName)}</span>` : ''}
           </span>
         </span>
@@ -172,8 +176,45 @@ function secretRow(field, label, item, { monospace = true } = {}) {
                 data-action="toggle-secret" data-field="${escapeHtml(field)}">${shown ? '隠す' : '表示'}</button>
         <button class="btn btn-sm btn-outline-secondary" type="button"
                 data-action="copy-secret" data-field="${escapeHtml(field)}">コピー</button>
+        ${field === 'privateKey'
+          ? '<button class="btn btn-sm btn-outline-secondary" type="button" data-action="download-key">保存</button>'
+          : ''}
       </div>
       ${record.updatedAt ? `<div class="detail-hint">最終更新 ${escapeHtml(formatDateTime(record.updatedAt))}</div>` : ''}
+    </div>
+  `;
+}
+
+// SSH 鍵の公開側。公開鍵は秘密ではないので、復号も監査ログも要らずそのまま出せる。
+function sshDetail(item) {
+  const ssh = item.sshKey;
+  return `
+    <div class="detail-field">
+      <div class="detail-label">SSH 鍵</div>
+      <div class="detail-value detail-value-inline">
+        <span class="detail-badges"><span class="badge bg-dark">${escapeHtml(ssh.keyType)}</span><span class="badge bg-secondary">${ssh.bits} bit</span>${ssh.hasPrivateKey
+          ? (ssh.privateKeyEncrypted
+            ? '<span class="badge bg-warning text-dark">パスフレーズ付き</span>'
+            : '<span class="badge bg-success">パスフレーズなし</span>')
+          : '<span class="badge bg-light text-dark">公開鍵のみ</span>'}</span>
+        <div class="font-monospace small mt-2">${escapeHtml(ssh.fingerprint)}</div>${ssh.comment ? `<div class="small text-muted">${escapeHtml(ssh.comment)}</div>` : ''}
+      </div>
+      <div class="detail-actions">
+        <button class="btn btn-sm btn-outline-secondary" type="button"
+                data-action="copy-plain" data-value="${escapeHtml(ssh.fingerprint)}">FP をコピー</button>
+      </div>
+    </div>
+
+    <div class="detail-field">
+      <div class="detail-label">公開鍵</div>
+      <div class="detail-value detail-value-inline font-monospace small">${escapeHtml(ssh.publicKey)}</div>
+      <div class="detail-actions">
+        <button class="btn btn-sm btn-outline-secondary" type="button"
+                data-action="copy-plain" data-value="${escapeHtml(ssh.publicKey)}">コピー</button>
+        <button class="btn btn-sm btn-outline-secondary" type="button"
+                data-action="copy-authorized-key">authorized_keys 用</button>
+      </div>
+      <div class="detail-hint">公開鍵は秘密ではないので、伏せずにそのまま出しています</div>
     </div>
   `;
 }
@@ -226,6 +267,8 @@ function renderDetail(item) {
         </div>
       </div>` : ''}
 
+    ${item.sshKey ? sshDetail(item) : ''}
+
     ${secretRow('password', 'パスワード', item)}
 
     ${item.secrets.totp ? `
@@ -244,6 +287,9 @@ function renderDetail(item) {
         <div class="detail-label">URL・ホスト名</div>
         <div class="detail-value">${urlsHtml}</div>
       </div>` : ''}
+
+    ${secretRow('privateKey', '秘密鍵', item)}
+    ${secretRow('passphrase', '秘密鍵のパスフレーズ', item)}
 
     ${secretRow('note', 'セキュアメモ', item, { monospace: false })}
 
@@ -396,6 +442,21 @@ function openItemModal(item) {
   totp.placeholder = item && item.secrets.totp
     ? '設定済み。変えるときだけ入力してください'
     : 'Base32 のシークレット、または otpauth:// から始まる文字列';
+
+  // SSH 鍵の欄。既存の秘密鍵は入れない（開いただけで復号しないため）
+  const privateKey = document.getElementById('item-privatekey');
+  const passphrase = document.getElementById('item-passphrase');
+  const publicKey = document.getElementById('item-publickey');
+  const comment = document.getElementById('item-comment');
+  privateKey.value = '';
+  passphrase.value = '';
+  publicKey.value = item && item.sshKey ? item.sshKey.publicKey : '';
+  comment.value = item && item.sshKey ? item.sshKey.comment : '';
+  privateKey.placeholder = item && item.secrets.privateKey
+    ? '登録済み。差し替えるときだけ貼ってください'
+    : '-----BEGIN OPENSSH PRIVATE KEY----- から始まる中身を貼る（PEM 形式も可）';
+  showSshPreview(item && item.sshKey ? item.sshKey : null);
+  applyTypeVisibility();
   note.placeholder = item && item.secrets.note
     ? '設定済み。変えるときだけ入力してください（消すには「－」と1文字だけ入れて保存）'
     : '手順、接続条件、注意点など。暗号化されます';
@@ -403,10 +464,111 @@ function openItemModal(item) {
   modal('item-modal').show();
 }
 
+// 種別によって使わない欄を隠す。SSH 鍵にパスワードや TOTP を出しても混乱するだけなので。
+function applyTypeVisibility() {
+  const type = document.getElementById('item-type').value;
+  const groups = {
+    password: type !== 'sshkey',
+    totp: type === 'login' || type === 'server',
+    ssh: type === 'sshkey',
+    note: true
+  };
+  for (const [name, visible] of Object.entries(groups)) {
+    const el = document.querySelector(`[data-field-group="${name}"]`);
+    if (el) el.classList.toggle('d-none', !visible);
+  }
+}
+
+function showSshPreview(info) {
+  const box = document.getElementById('ssh-preview');
+  if (!info) {
+    box.classList.add('d-none');
+    box.textContent = '';
+    return;
+  }
+  box.classList.remove('d-none');
+  box.innerHTML = `
+    <strong>${escapeHtml(info.keyType)}</strong> ${info.bits} bit
+    ${info.encrypted || info.privateKeyEncrypted ? '<span class="badge bg-warning text-dark ms-1">パスフレーズ付き</span>' : ''}
+    <div class="font-monospace mt-1">${escapeHtml(info.fingerprint)}</div>
+  `;
+}
+
+// 貼られた鍵をサーバーに読ませて、公開鍵とフィンガープリントを埋める。
+// 保存する前に「貼り間違っていないか」を見せるため。
+async function inspectSshInput() {
+  const privateKey = document.getElementById('item-privatekey').value.trim();
+  const publicKeyField = document.getElementById('item-publickey');
+  const passphrase = document.getElementById('item-passphrase').value;
+  if (!privateKey && !publicKeyField.value.trim()) {
+    showSshPreview(null);
+    return;
+  }
+  try {
+    const { info } = await apiFetch('/api/ssh/inspect', {
+      method: 'POST',
+      body: privateKey ? { privateKey, passphrase } : { publicKey: publicKeyField.value.trim() }
+    });
+    if (privateKey && info.publicKey) publicKeyField.value = info.publicKey;
+    if (info.comment && !document.getElementById('item-comment').value) {
+      document.getElementById('item-comment').value = info.comment;
+    }
+    showSshPreview(info);
+    showError('item-error', null);
+  } catch (err) {
+    showSshPreview(null);
+    showError('item-error', err.message);
+  }
+}
+
+async function generateSshKey() {
+  const type = document.getElementById('ssh-gen-type').value;
+  const comment = document.getElementById('item-comment').value.trim();
+  const existing = document.getElementById('item-privatekey').value.trim();
+  if (existing && !window.confirm('入力済みの秘密鍵を上書きします。よろしいですか？')) return;
+  try {
+    const { key } = await apiFetch('/api/ssh/generate', { method: 'POST', body: { type, comment } });
+    document.getElementById('item-privatekey').value = key.privateKey;
+    document.getElementById('item-publickey').value = key.publicKey;
+    if (!document.getElementById('item-comment').value) {
+      document.getElementById('item-comment').value = key.comment;
+    }
+    if (!document.getElementById('item-title').value) {
+      document.getElementById('item-title').value = `${key.keyType} ${key.comment || ''}`.trim();
+    }
+    document.getElementById('item-passphrase').value = '';
+    showSshPreview(key);
+    toast('鍵を作りました。保存するまでは保管されていません', 'success');
+  } catch (err) {
+    showError('item-error', err.message);
+  }
+}
+
+// 秘密鍵をファイルとして保存する。ssh で使うにはファイルが要るため。
+function downloadPrivateKey(item, contents) {
+  const safeTitle = (item.title || 'id_key').replace(/[^\w.-]+/g, '_').slice(0, 48);
+  const keyType = (item.sshKey && item.sshKey.keyType) || '';
+  const name = keyType.includes('ed25519') ? `id_ed25519_${safeTitle}`
+    : keyType.includes('rsa') ? `id_rsa_${safeTitle}`
+      : safeTitle;
+  const blob = new Blob([contents.endsWith('\n') ? contents : `${contents}\n`], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // 秘密鍵を指す URL を残さない
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`${name} として保存しました。chmod 600 を忘れずに`, 'success');
+}
+
 async function submitItem(event) {
   event.preventDefault();
   showError('item-error', null);
 
+  const type = document.getElementById('item-type').value;
   const secrets = {};
   const password = document.getElementById('item-password').value;
   const totpSecret = document.getElementById('item-totp').value.trim();
@@ -415,8 +577,15 @@ async function submitItem(event) {
   if (totpSecret) secrets.totp = totpSecret;
   if (note) secrets.note = note === '－' ? null : note; // 全角マイナス1文字で削除
 
+  if (type === 'sshkey') {
+    const privateKey = document.getElementById('item-privatekey').value.trim();
+    const passphrase = document.getElementById('item-passphrase').value;
+    if (privateKey) secrets.privateKey = privateKey;
+    if (passphrase) secrets.passphrase = passphrase;
+  }
+
   const payload = {
-    type: document.getElementById('item-type').value,
+    type,
     title: document.getElementById('item-title').value,
     username: document.getElementById('item-username').value,
     urls: document.getElementById('item-urls').value,
@@ -424,6 +593,11 @@ async function submitItem(event) {
     favorite: document.getElementById('item-favorite').checked,
     secrets
   };
+
+  if (type === 'sshkey') {
+    payload.publicKey = document.getElementById('item-publickey').value.trim();
+    payload.comment = document.getElementById('item-comment').value.trim();
+  }
 
   const button = event.target.querySelector('button[type=submit]');
   button.disabled = true;
@@ -685,6 +859,19 @@ function wire() {
       } else if (action === 'copy-plain') {
         await copyToClipboard(button.dataset.value);
         toast('コピーしました', 'success');
+      } else if (action === 'copy-authorized-key') {
+        const item = state.items.find((i) => i.id === state.itemId);
+        const { line } = await apiFetch(
+          `/api/vaults/${item.vaultId}/items/${item.id}/authorized-key`
+        );
+        await copyToClipboard(line);
+        toast('authorized_keys 用の1行をコピーしました', 'success');
+      } else if (action === 'download-key') {
+        const item = state.items.find((i) => i.id === state.itemId);
+        const contents = state.revealed.privateKey !== undefined
+          ? state.revealed.privateKey
+          : await reveal('privateKey', 'copy');
+        downloadPrivateKey(item, contents);
       } else if (action === 'show-totp') {
         await showTotp();
       } else if (action === 'copy-totp') {
@@ -734,6 +921,8 @@ function wire() {
         state.generatorTarget = 'item-password';
         regenerate();
         modal('generator-modal').show();
+      } else if (action === 'generate-ssh') {
+        await generateSshKey();
       } else if (action === 'regenerate') {
         regenerate();
       } else if (action === 'use-generated') {
@@ -804,6 +993,17 @@ function wire() {
   });
   for (const id of ['gen-upper', 'gen-lower', 'gen-digit', 'gen-symbol', 'gen-ambiguous']) {
     document.getElementById(id).addEventListener('change', regenerate);
+  }
+
+  document.getElementById('item-type').addEventListener('change', applyTypeVisibility);
+
+  // 鍵を貼ったら、少し待ってから読み取って公開鍵を埋める
+  let sshInspectTimer = null;
+  for (const id of ['item-privatekey', 'item-publickey', 'item-passphrase']) {
+    document.getElementById(id).addEventListener('input', () => {
+      if (sshInspectTimer) clearTimeout(sshInspectTimer);
+      sshInspectTimer = setTimeout(inspectSshInput, 400);
+    });
   }
 
   bindStrengthMeter('item-password', 'item-strength-bar', 'item-strength-text');

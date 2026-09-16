@@ -58,6 +58,14 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+// Authorization: Bearer <トークン> を読む。Chrome 拡張がこれを使う。
+function readBearerToken(req) {
+  const header = req.headers.authorization;
+  if (!header) return null;
+  const match = String(header).match(/^Bearer\s+([A-Za-z0-9_-]{16,128})$/);
+  return match ? match[1] : null;
+}
+
 // --- 画面 -------------------------------------------------------------------
 
 function renderPage(req, res, name, vars) {
@@ -145,7 +153,12 @@ async function handleRequest(req, res) {
       return;
     }
 
-    const sessionId = session.sessionIdFromRequest(req);
+    // 認証は2通り。
+    //   ・画面     : Cookie（CSRF 対策が要る）
+    //   ・Chrome拡張: Authorization: Bearer <トークン>（勝手に付いてこないので CSRF 対策が要らない）
+    // どちらで来たかを覚えておく。Bearer のときだけ CSRF 検証を省く。
+    const bearer = readBearerToken(req);
+    const sessionId = bearer || session.sessionIdFromRequest(req);
     const current = session.touch(sessionId);
     const user = current ? users.toPublic(users.get(current.userId)) : null;
 
@@ -165,9 +178,22 @@ async function handleRequest(req, res) {
       session: current,
       user,
       ip: http.clientIp(req),
+      viaBearer: !!bearer,
       body: {},
       setCookie: null
     };
+
+    // 拡張からの事前確認（プリフライト）。許可した拡張だけに応える。
+    if (req.method === 'OPTIONS' && parsed.pathname.startsWith('/api/')) {
+      const cors = http.corsHeaders(req);
+      if (Object.keys(cors).length === 0) {
+        http.sendError(req, res, 403, 'この Origin からは利用できません');
+      } else {
+        http.send(req, res, 204, '', { ...cors, 'Content-Length': 0 });
+      }
+      done();
+      return;
+    }
 
     if (parsed.pathname.startsWith('/api/')) {
       if (!['GET', 'HEAD'].includes(req.method)) {
@@ -179,12 +205,16 @@ async function handleRequest(req, res) {
           return;
         }
 
-        // CSRF 検証。セットアップとログインはまだセッションが無いので、
-        // トークンは求めず Origin / Referer の一致だけを見る。
+        // CSRF 検証。
+        // Bearer で来たリクエストは対象外。Cookie と違って勝手には付いてこないので、
+        // 他サイトに踏ませても攻撃者はトークンを付けられない。
+        // ここを「Bearer があれば素通し」にしないよう、Cookie 認証のときだけ検証する。
         const isPreAuth = ['/api/setup', '/api/login'].includes(parsed.pathname);
-        const csrfResult = session.checkCsrf(req, current, req.headers['x-csrf-token'], {
-          requireToken: !isPreAuth
-        });
+        const isExtensionCall = ctx.viaBearer
+          || (isPreAuth && http.allowedExtensionOrigin(req.headers.origin));
+        const csrfResult = isExtensionCall
+          ? { ok: true }
+          : session.checkCsrf(req, current, req.headers['x-csrf-token'], { requireToken: !isPreAuth });
         if (!csrfResult.ok) {
           log.warn(`CSRF 検証で弾きました: ${parsed.pathname}: ${csrfResult.reason}`);
           audit.record('access.denied', {

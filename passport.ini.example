@@ -39,3 +39,11 @@ minPasswordLength = 12
 
 [audit]
 enabled = true
+
+[extension]
+; Chrome 拡張からの API 利用。切ると拡張からのリクエストを CORS で弾く。
+enabled = on
+; 受け付ける拡張ID。extension/manifest.json の key で固定してあるので既定のままで動く。
+; 拡張を作り直して ID が変わったら、chrome://extensions で見える ID に書き換える。
+; 空にすると、どの拡張からでも通ってしまうので空にしない。
+allowedIds = iookbapfomcndnncbdohnhblclbhmfoc

@@ -1,0 +1,139 @@
+/* popup の見た目。拡張は Bootstrap を読めない（読ませたくない）ので素で書く。 */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1f2933;
+  --muted: #6b7680;
+  --border: #dee2e6;
+  --accent: #0d6efd;
+  --accent-fg: #ffffff;
+  --head: #1f2933;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1f24;
+    --fg: #e6e9ec;
+    --muted: #9aa4ad;
+    --border: #333b44;
+    --head: #12161a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 22rem;
+  margin: 0;
+  font: 13px/1.5 system-ui, -apple-system, "Noto Sans JP", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .55rem .75rem;
+  background: var(--head);
+  color: #fff;
+}
+
+.brand { font-weight: 600; }
+.head-actions { display: flex; gap: .25rem; }
+
+.icon-button {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: .15rem .3rem;
+  border-radius: .25rem;
+}
+.icon-button:hover { background: rgba(255, 255, 255, .15); }
+
+section { padding: .75rem; }
+
+label {
+  display: block;
+  font-size: .78rem;
+  color: var(--muted);
+  margin-bottom: .2rem;
+}
+
+input[type="text"], input[type="password"], input[type="search"], input[type="url"] {
+  width: 100%;
+  padding: .4rem .55rem;
+  margin-bottom: .6rem;
+  border: 1px solid var(--border);
+  border-radius: .3rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  border-radius: .3rem;
+  padding: .35rem .7rem;
+  font: inherit;
+  cursor: pointer;
+}
+.button:hover { border-color: var(--accent); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.button.primary:hover { filter: brightness(1.08); }
+.button.small { padding: .2rem .45rem; font-size: .78rem; }
+.button:disabled { opacity: .6; cursor: default; }
+
+form .button.primary { width: 100%; margin-top: .3rem; }
+
+.site {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: .5rem;
+}
+.site-host { font-weight: 600; word-break: break-all; }
+.site-count { color: var(--muted); font-size: .78rem; flex: 0 0 auto; margin-left: .5rem; }
+
+.items { list-style: none; margin: 0; padding: 0; max-height: 19rem; overflow-y: auto; }
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .45rem 0;
+  border-top: 1px solid var(--border);
+}
+.item:first-child { border-top: 0; }
+
+.item-info { min-width: 0; flex: 1 1 auto; }
+.item-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-sub { color: var(--muted); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-actions { display: flex; gap: .25rem; flex: 0 0 auto; }
+
+.badge {
+  display: inline-block;
+  margin-left: .35rem;
+  padding: 0 .3rem;
+  border-radius: .2rem;
+  background: var(--border);
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 400;
+}
+
+.hint { color: var(--muted); margin: .25rem 0; }
+.hint.small { font-size: .75rem; word-break: break-all; }
+.error { color: #d6336c; margin: .25rem 0; }
+
+.foot { padding: 0 .75rem .55rem; min-height: 1.4rem; }
+.status { font-size: .76rem; color: var(--muted); }
+.status.ok { color: #2f9e44; }
+.status.warn { color: #e8590c; }

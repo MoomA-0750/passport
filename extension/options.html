@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Passport の設定</title>
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    body { width: auto; max-width: 34rem; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+    h2 { font-size: .9rem; margin: 1.5rem 0 .5rem; }
+    .box { border: 1px solid var(--border); border-radius: .4rem; padding: .75rem; }
+    code { background: rgba(127,127,127,.15); padding: 0 .2rem; border-radius: .2rem; }
+    ol { padding-left: 1.2rem; }
+    li { margin-bottom: .35rem; }
+  </style>
+</head>
+<body>
+  <h1>🔐 Passport の設定</h1>
+
+  <form id="settings-form">
+    <label for="server-url">Passport サーバーの URL</label>
+    <input id="server-url" type="url" placeholder="https://passport.example.local:3443"
+           autocapitalize="none" spellcheck="false" required>
+    <p class="hint small">
+      末尾の <code>/</code> は要りません。社内サーバーのホスト名か IP を入れてください。
+    </p>
+    <button class="button primary" type="submit">保存して接続を確かめる</button>
+    <p id="message" class="hint" hidden></p>
+  </form>
+
+  <h2>この拡張の ID</h2>
+  <div class="box">
+    <code id="extension-id">—</code>
+    <p class="hint small" style="margin-bottom:0">
+      サーバーの <code>passport.ini</code> の <code>[extension] allowedIds</code> がこの ID を
+      許可している必要があります。既定値のままなら一致しているはずです。
+    </p>
+  </div>
+
+  <h2>自己署名の証明書を使っている場合</h2>
+  <div class="box">
+    <ol style="margin:0">
+      <li>先に普通のタブでサーバーを開き、警告画面で「詳細設定」→「アクセスする」を選ぶ</li>
+      <li>一度通しておくと、この拡張からの通信も届くようになります</li>
+    </ol>
+  </div>
+
+  <h2>この拡張がしないこと</h2>
+  <div class="box">
+    <ul style="margin:0; padding-left:1.2rem">
+      <li>ページを開いただけでは何もしません。入力はボタンを押したときだけです</li>
+      <li>フォームを勝手に送信しません</li>
+      <li>パスワードを拡張側に保存しません。保持するのはログイン用のトークンだけで、
+          ブラウザを閉じると消えます</li>
+    </ul>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

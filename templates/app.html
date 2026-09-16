@@ -74,6 +74,7 @@
             <select class="form-select" id="item-type">
               <option value="login">ログイン情報</option>
               <option value="server">サーバー・機器</option>
+              <option value="sshkey">SSH 鍵</option>
               <option value="card">カード・契約</option>
               <option value="note">セキュアメモ</option>
             </select>
@@ -93,7 +94,7 @@
             <input class="form-control" id="item-urls" placeholder="スペースまたはカンマ区切り">
           </div>
 
-          <div class="col-12">
+          <div class="col-12" data-field-group="password">
             <label class="form-label" for="item-password">パスワード</label>
             <div class="input-group">
               <input class="form-control font-monospace" id="item-password" type="password" autocomplete="new-password">
@@ -104,14 +105,65 @@
             <div class="form-text" id="item-strength-text">空のままにすると変更しません</div>
           </div>
 
-          <div class="col-12">
+          <div class="col-12" data-field-group="totp">
             <label class="form-label" for="item-totp">ワンタイムパスワード（TOTP）</label>
             <input class="form-control font-monospace" id="item-totp" type="password" autocomplete="off"
                    placeholder="Base32 のシークレット、または otpauth:// から始まる文字列">
             <div class="form-text">認証アプリの「手動設定」で出てくる文字列を貼れます</div>
           </div>
 
-          <div class="col-12">
+          <!-- SSH 鍵のときだけ出る -->
+          <div class="col-12 d-none" data-field-group="ssh">
+            <div class="border rounded p-3 bg-light">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <strong class="small">SSH 鍵</strong>
+                <div class="d-flex gap-2">
+                  <select class="form-select form-select-sm" id="ssh-gen-type" style="width:11rem">
+                    <option value="ed25519">ed25519（推奨）</option>
+                    <option value="rsa-3072">RSA 3072</option>
+                    <option value="rsa-4096">RSA 4096</option>
+                  </select>
+                  <button class="btn btn-sm btn-outline-primary text-nowrap" type="button"
+                          data-action="generate-ssh">新しく作る</button>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="item-privatekey">秘密鍵</label>
+                <textarea class="form-control font-monospace small" id="item-privatekey" rows="5"
+                          spellcheck="false"
+                          placeholder="-----BEGIN OPENSSH PRIVATE KEY----- から始まる中身を貼る（PEM 形式も可）"></textarea>
+                <div class="form-text">暗号化して保管されます。パスフレーズ付きのままでも登録できます</div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="item-passphrase">秘密鍵のパスフレーズ</label>
+                <div class="input-group">
+                  <input class="form-control font-monospace" id="item-passphrase" type="password"
+                         autocomplete="new-password">
+                  <button class="btn btn-outline-secondary" type="button"
+                          data-toggle-visibility="item-passphrase">表示</button>
+                </div>
+                <div class="form-text">鍵にパスフレーズが掛かっている場合だけ。これも暗号化して保管されます</div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="item-publickey">公開鍵（秘密鍵を入れたら自動で埋まります）</label>
+                <textarea class="form-control font-monospace small" id="item-publickey" rows="2"
+                          spellcheck="false" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+                <div class="form-text">公開鍵だけの控えとして登録することもできます</div>
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label" for="item-comment">コメント</label>
+                <input class="form-control" id="item-comment" maxlength="128" placeholder="mooma@workstation">
+              </div>
+
+              <div class="alert alert-secondary small mb-0 d-none" id="ssh-preview"></div>
+            </div>
+          </div>
+
+          <div class="col-12" data-field-group="note">
             <label class="form-label" for="item-note">セキュアメモ</label>
             <textarea class="form-control" id="item-note" rows="4"
                       placeholder="手順、接続条件、注意点など。暗号化されます"></textarea>

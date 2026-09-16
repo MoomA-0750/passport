@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Passport",
+  "version": "0.1.0",
+  "description": "社内用パスワード金庫 Passport から、見ているサイトのログイン情報を入力する",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1MDRqclSXcgwBasER1jKffpsjJAYApNp+gOeK2hO/zWPdttk2hW9Nx/rGxOKLFpFdt48lhNWmEz1+QOvKA3ZR44r/+hcjgOdoj+OrAeEhozZqieBUt7xFrLN3Wq2Oi26GCEZFHcjEdMyiHV5uhfCr9mjB1K6QpVxUxg79hw3COTeyNknuuW+zrG1C43sdPM4WlXSV3R0jXXb11arpyP+kiRvtFrsCW6INxyrjYSfVk+DF7kyL8XyVmD4gNIRBJQTkeCds3eIZjviHHvIXgTco+xu6uwFNcCq8UXEZ2wNxaUoL7jRxt1+Eqio2plIubxiPk0O11bz36uL6ViGHEEubQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "action": {
+    "default_title": "Passport",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Passport を開く"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

@@ -107,6 +107,14 @@ body {
 
 .min-width-0 { min-width: 0; }
 
+/* 一覧ヘッダーの説明文がボタンに重ならないように */
+.app-list .border-bottom small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- Vault 一覧 --- */
 
 .vault-item {
@@ -225,8 +233,15 @@ body {
 .detail-value {
   grid-area: value;
   word-break: break-all;
+  /* セキュアメモの改行を保つため pre-wrap。
+     ただし HTML 側の改行まで拾ってしまうので、バッジなどを並べる行は
+     .detail-value-inline で打ち消す。 */
   white-space: pre-wrap;
 }
+
+.detail-value-inline { white-space: normal; }
+
+.detail-badges { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
 
 .detail-value.masked { color: #adb5bd; letter-spacing: .1em; }
 
