@@ -1,0 +1,29 @@
+<main class="auth-card">
+  <div class="text-center mb-4">
+    <div class="auth-logo">🔐</div>
+    <h1 class="h4 mt-2">KeyBox</h1>
+    <p class="text-muted small mb-0">社内用パスワード金庫</p>
+  </div>
+
+  <form id="login-form" autocomplete="off">
+    <div class="mb-3">
+      <label class="form-label" for="username">ユーザー名</label>
+      <input class="form-control" id="username" name="username" required autofocus
+             autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
+    </div>
+
+    <div class="mb-4">
+      <label class="form-label" for="password">パスワード</label>
+      <div class="input-group">
+        <input class="form-control" id="password" name="password" type="password" required
+               autocomplete="current-password">
+        <button class="btn btn-outline-secondary" type="button" data-toggle-visibility="password">表示</button>
+      </div>
+    </div>
+
+    <div class="alert alert-danger d-none" id="error"></div>
+    <button class="btn btn-primary w-100" type="submit">ログイン</button>
+  </form>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/login.js"></script>

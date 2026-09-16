@@ -1,0 +1,314 @@
+<nav class="navbar navbar-expand navbar-dark app-navbar">
+  <div class="container-fluid">
+    <span class="navbar-brand mb-0">🔐 KeyBox</span>
+
+    <form class="app-search flex-grow-1 mx-3" id="search-form" role="search" autocomplete="off">
+      <input class="form-control form-control-sm" id="search-input" type="search"
+             placeholder="タイトル・ユーザー名・URL・タグで検索（秘密の中身は検索できません）">
+    </form>
+
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown" type="button">
+        <span id="nav-username">…</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><button class="dropdown-item" type="button" data-action="open-password-change">パスワードを変更</button></li>
+        <li><button class="dropdown-item" type="button" data-action="lock-now">画面をロック</button></li>
+        <li id="nav-admin-item" class="d-none"><hr class="dropdown-divider"></li>
+        <li id="nav-admin-link" class="d-none"><a class="dropdown-item" href="/admin">ユーザーと監査ログ</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><button class="dropdown-item text-danger" type="button" data-action="logout">ログアウト</button></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="app-body">
+  <!-- Vault 一覧 -->
+  <aside class="app-sidebar">
+    <div class="d-flex align-items-center justify-content-between px-3 pt-3 pb-2">
+      <h2 class="h6 text-uppercase text-muted mb-0">Vault</h2>
+      <button class="btn btn-sm btn-outline-secondary py-0 px-2" type="button" data-action="new-vault"
+              title="Vault を作る">＋</button>
+    </div>
+    <ul class="list-unstyled vault-list mb-0" id="vault-list"></ul>
+  </aside>
+
+  <!-- アイテム一覧 -->
+  <section class="app-list">
+    <div class="d-flex align-items-center justify-content-between p-3 border-bottom">
+      <div class="min-width-0">
+        <h2 class="h6 mb-0 text-truncate" id="list-title">読み込み中…</h2>
+        <small class="text-muted" id="list-subtitle"></small>
+      </div>
+      <div class="btn-group btn-group-sm flex-shrink-0">
+        <button class="btn btn-outline-secondary" type="button" data-action="manage-members" id="btn-members">共有</button>
+        <button class="btn btn-primary" type="button" data-action="new-item" id="btn-new-item">＋ 追加</button>
+      </div>
+    </div>
+    <ul class="list-unstyled item-list mb-0" id="item-list"></ul>
+  </section>
+
+  <!-- 詳細 -->
+  <section class="app-detail" id="detail-panel">
+    <div class="detail-empty text-center text-muted p-5" id="detail-empty">
+      <div class="display-6">🔑</div>
+      <p class="mt-3 mb-0">左の一覧からアイテムを選んでください</p>
+    </div>
+    <div class="d-none" id="detail-content"></div>
+  </section>
+</div>
+
+<!-- アイテムの作成・編集 -->
+<div class="modal fade" id="item-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <form class="modal-content" id="item-form" autocomplete="off">
+      <div class="modal-header">
+        <h5 class="modal-title" id="item-modal-title">アイテムを追加</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label" for="item-type">種類</label>
+            <select class="form-select" id="item-type">
+              <option value="login">ログイン情報</option>
+              <option value="server">サーバー・機器</option>
+              <option value="card">カード・契約</option>
+              <option value="note">セキュアメモ</option>
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label" for="item-title">タイトル <span class="text-danger">*</span></label>
+            <input class="form-control" id="item-title" required maxlength="128">
+            <div class="form-text">一覧と検索に使われます（暗号化されません）</div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label" for="item-username">ユーザー名・ID</label>
+            <input class="form-control" id="item-username" maxlength="128">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="item-urls">URL・ホスト名</label>
+            <input class="form-control" id="item-urls" placeholder="スペースまたはカンマ区切り">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="item-password">パスワード</label>
+            <div class="input-group">
+              <input class="form-control font-monospace" id="item-password" type="password" autocomplete="new-password">
+              <button class="btn btn-outline-secondary" type="button" data-toggle-visibility="item-password">表示</button>
+              <button class="btn btn-outline-secondary" type="button" data-action="generate-password">生成</button>
+            </div>
+            <div class="password-meter mt-2"><div class="password-meter-bar" id="item-strength-bar"></div></div>
+            <div class="form-text" id="item-strength-text">空のままにすると変更しません</div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="item-totp">ワンタイムパスワード（TOTP）</label>
+            <input class="form-control font-monospace" id="item-totp" type="password" autocomplete="off"
+                   placeholder="Base32 のシークレット、または otpauth:// から始まる文字列">
+            <div class="form-text">認証アプリの「手動設定」で出てくる文字列を貼れます</div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="item-note">セキュアメモ</label>
+            <textarea class="form-control" id="item-note" rows="4"
+                      placeholder="手順、接続条件、注意点など。暗号化されます"></textarea>
+          </div>
+
+          <div class="col-md-8">
+            <label class="form-label" for="item-tags">タグ</label>
+            <input class="form-control" id="item-tags" placeholder="カンマ区切り">
+          </div>
+          <div class="col-md-4 d-flex align-items-end">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="item-favorite">
+              <label class="form-check-label" for="item-favorite">よく使う</label>
+            </div>
+          </div>
+        </div>
+        <div class="alert alert-danger d-none mt-3" id="item-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">キャンセル</button>
+        <button class="btn btn-primary" type="submit">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Vault の作成 -->
+<div class="modal fade" id="vault-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <form class="modal-content" id="vault-form" autocomplete="off">
+      <div class="modal-header">
+        <h5 class="modal-title">Vault を作る</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="vault-name">名前 <span class="text-danger">*</span></label>
+          <input class="form-control" id="vault-name" required maxlength="64" placeholder="例: 共通インフラ">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="vault-icon">アイコン</label>
+          <input class="form-control" id="vault-icon" maxlength="8" value="🔐" style="width:6rem">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="vault-description">説明</label>
+          <textarea class="form-control" id="vault-description" rows="2" maxlength="512"></textarea>
+        </div>
+        <p class="text-muted small mb-0">
+          作った人が owner になります。あとから「共有」でメンバーを足せます。
+        </p>
+        <div class="alert alert-danger d-none mt-3" id="vault-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">キャンセル</button>
+        <button class="btn btn-primary" type="submit">作る</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 共有（メンバー管理） -->
+<div class="modal fade" id="members-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">共有 <small class="text-muted" id="members-vault-name"></small></h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr><th>メンバー</th><th style="width:10rem">権限</th><th style="width:5rem"></th></tr>
+          </thead>
+          <tbody id="members-tbody"></tbody>
+        </table>
+
+        <div id="members-add-area" class="border-top pt-3 d-none">
+          <div class="row g-2 align-items-end">
+            <div class="col-sm-6">
+              <label class="form-label" for="member-user">追加する人</label>
+              <select class="form-select" id="member-user"></select>
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label" for="member-role">権限</label>
+              <select class="form-select" id="member-role">
+                <option value="viewer">viewer（見るだけ）</option>
+                <option value="editor">editor（追加・編集できる）</option>
+                <option value="owner">owner（共有も管理できる）</option>
+              </select>
+            </div>
+            <div class="col-sm-2">
+              <button class="btn btn-primary w-100" type="button" data-action="add-member">追加</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-info small mt-3 mb-0">
+          Vault に入れた人は、その Vault のパスワードを復号して見られます。
+          誰がいつ何を見たかは監査ログに残ります。
+        </div>
+        <div class="alert alert-danger d-none mt-3" id="members-error"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- パスワード生成器 -->
+<div class="modal fade" id="generator-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">パスワードを生成</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group mb-3">
+          <input class="form-control font-monospace" id="gen-output" readonly>
+          <button class="btn btn-outline-secondary" type="button" data-action="regenerate">引き直す</button>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="gen-length">長さ: <span id="gen-length-label">20</span></label>
+          <input class="form-range" type="range" id="gen-length" min="8" max="64" value="20">
+        </div>
+        <div class="d-flex flex-wrap gap-3">
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="gen-upper" checked>
+            <label class="form-check-label" for="gen-upper">大文字</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="gen-lower" checked>
+            <label class="form-check-label" for="gen-lower">小文字</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="gen-digit" checked>
+            <label class="form-check-label" for="gen-digit">数字</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="gen-symbol" checked>
+            <label class="form-check-label" for="gen-symbol">記号</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="gen-ambiguous">
+            <label class="form-check-label" for="gen-ambiguous">紛らわしい文字も使う（l 1 I O 0）</label></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">閉じる</button>
+        <button class="btn btn-primary" type="button" data-action="use-generated">この値を使う</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自分のパスワード変更 -->
+<div class="modal fade" id="password-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <form class="modal-content" id="password-form" autocomplete="off">
+      <div class="modal-header">
+        <h5 class="modal-title">パスワードを変更</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="pw-current">今のパスワード</label>
+          <input class="form-control" type="password" id="pw-current" required autocomplete="current-password">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="pw-new">新しいパスワード</label>
+          <input class="form-control" type="password" id="pw-new" required autocomplete="new-password">
+          <div class="password-meter mt-2"><div class="password-meter-bar" id="pw-strength-bar"></div></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="pw-confirm">もう一度</label>
+          <input class="form-control" type="password" id="pw-confirm" required autocomplete="new-password">
+        </div>
+        <p class="text-muted small mb-0">変更すると、ほかの端末のセッションは切れます。</p>
+        <div class="alert alert-danger d-none mt-3" id="pw-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">キャンセル</button>
+        <button class="btn btn-primary" type="submit">変更する</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 無操作ロック -->
+<div class="lock-overlay d-none" id="lock-overlay">
+  <div class="lock-card">
+    <div class="text-center mb-3">
+      <div class="auth-logo">🔒</div>
+      <h2 class="h5 mt-2 mb-1">画面をロックしました</h2>
+      <p class="text-muted small mb-0">パスワードを入れると戻れます</p>
+    </div>
+    <form id="unlock-form" autocomplete="off">
+      <input class="form-control mb-2" type="password" id="unlock-password" placeholder="パスワード"
+             autocomplete="current-password">
+      <div class="alert alert-danger d-none py-1 px-2 small" id="unlock-error"></div>
+      <button class="btn btn-primary w-100" type="submit">解除</button>
+      <button class="btn btn-link w-100 mt-1 text-muted" type="button" data-action="logout">ログアウトする</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<script src="/static/bootstrap.bundle.min.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/app.js"></script>

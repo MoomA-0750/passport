@@ -1,0 +1,50 @@
+<main class="auth-card">
+  <div class="text-center mb-4">
+    <div class="auth-logo">🔐</div>
+    <h1 class="h4 mt-2">KeyBox のセットアップ</h1>
+    <p class="text-muted small mb-0">最初の管理者アカウントを作ります</p>
+  </div>
+
+  <div class="alert alert-warning small">
+    <strong>先に確認してください。</strong>
+    保存したパスワードはサーバーのマスターキーで暗号化されます。
+    マスターキーのファイルを失うと、中身は復号できません。
+    <code>/etc/keybox/master.key</code> のバックアップを、KeyBox のデータとは別の場所に取ってください。
+  </div>
+
+  <form id="setup-form" autocomplete="off">
+    <div class="mb-3">
+      <label class="form-label" for="username">ユーザー名</label>
+      <input class="form-control" id="username" name="username" required
+             autocapitalize="none" autocorrect="off" spellcheck="false"
+             pattern="[a-z0-9][a-z0-9._-]{1,31}">
+      <div class="form-text">英小文字・数字・<code>. _ -</code> で2〜32文字</div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label" for="displayName">表示名（任意）</label>
+      <input class="form-control" id="displayName" name="displayName">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label" for="password">マスターパスワード</label>
+      <div class="input-group">
+        <input class="form-control" id="password" name="password" type="password" required
+               autocomplete="new-password">
+        <button class="btn btn-outline-secondary" type="button" data-toggle-visibility="password">表示</button>
+      </div>
+      <div class="password-meter mt-2"><div class="password-meter-bar" id="strength-bar"></div></div>
+      <div class="form-text" id="strength-text">長く、ほかで使っていないものにしてください</div>
+    </div>
+
+    <div class="mb-4">
+      <label class="form-label" for="passwordConfirm">もう一度</label>
+      <input class="form-control" id="passwordConfirm" type="password" required autocomplete="new-password">
+    </div>
+
+    <div class="alert alert-danger d-none" id="error"></div>
+    <button class="btn btn-primary w-100" type="submit">作成してはじめる</button>
+  </form>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/setup.js"></script>
