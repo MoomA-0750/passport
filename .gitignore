@@ -1,0 +1,14 @@
+# ユーザーデータ（絶対にコミットしない）
+data/
+backups/
+
+# 鍵とTLS証明書（絶対にコミットしない）
+*.key
+*.pem
+*.crt
+master.key
+keybox.ini
+
+# OS / エディタ
+.DS_Store
+*.swp
