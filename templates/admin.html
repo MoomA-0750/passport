@@ -12,6 +12,7 @@
   <ul class="nav nav-tabs mb-3" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-users" type="button">ユーザー</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-groups" type="button">グループ</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tokens" type="button">自動化トークン</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">監査ログ</button></li>
   </ul>
 
@@ -48,6 +49,22 @@
         Vault の owner は、ここで作ったグループを自分の Vault の共有先に足せます。
         グループから人を外すと、そのグループ経由で入っていた Vault には、その場で入れなくなります。
         共有先として使われているグループは消せません。
+      </p>
+    </div>
+
+    <div class="tab-pane fade" id="tab-tokens">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h5 mb-0">自動化トークン</h1>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-action="reload-tokens">更新</button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle small">
+          <thead><tr><th>名前</th><th>読める Vault</th><th>発行</th><th>期限</th><th>最後に使った</th><th>状態</th><th></th></tr></thead>
+          <tbody id="admin-tokens-tbody"></tbody>
+        </table>
+      </div>
+      <p class="text-muted small">
+        発行は Vault の owner が金庫の画面から行います。管理者はここで全部を見て、失効させられます。
       </p>
     </div>
 

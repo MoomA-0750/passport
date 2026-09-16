@@ -866,6 +866,42 @@ async function runCheckup() {
   ].join('');
 }
 
+
+// --- 自動化トークン -----------------------------------------------------------
+
+function tokenRows(list, { admin = false } = {}) {
+  return list.length ? list.map((t) => `
+    <tr data-token-id="${escapeHtml(t.id)}">
+      <td>${escapeHtml(t.name)}</td>
+      <td>${t.vaults.map((v) => escapeHtml(v.name)).join('、')}</td>
+      <td class="text-nowrap">${escapeHtml(t.createdBy)}<div class="text-muted">${escapeHtml(formatDateTime(t.createdAt))}</div></td>
+      <td class="text-nowrap">${escapeHtml(formatDateTime(t.expiresAt))}</td>
+      <td class="text-nowrap">${t.lastUsedAt ? `${escapeHtml(formatDateTime(t.lastUsedAt))}<div class="text-muted font-monospace">${escapeHtml(t.lastUsedIp || '')}</div>` : '<span class="text-muted">未使用</span>'}</td>
+      <td><span class="badge bg-${t.status === 'active' ? 'success' : 'secondary'}">${escapeHtml(t.statusLabel)}</span></td>
+      <td class="text-end">${t.revokedAt ? '' : '<button class="btn btn-sm btn-outline-danger" type="button" data-action="revoke-token">失効</button>'}</td>
+    </tr>`).join('') : `<tr><td colspan="7" class="text-center text-muted py-3">${admin ? 'トークンはありません' : 'まだありません'}</td></tr>`;
+}
+
+async function renderTokens() {
+  const { tokens } = await apiFetch('/api/tokens');
+  document.getElementById('tokens-tbody').innerHTML = tokenRows(tokens);
+}
+
+async function openTokens() {
+  showError('tokens-error', null);
+  document.getElementById('token-issued').classList.add('d-none');
+  document.getElementById('token-value').value = '';
+  document.getElementById('token-form').reset();
+  const owned = state.vaults.filter((v) => v.role === 'owner');
+  document.getElementById('token-vaults').innerHTML = owned.length ? owned.map((v) => `
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" value="${escapeHtml(v.id)}" id="token-vault-${escapeHtml(v.id)}">
+      <label class="form-check-label" for="token-vault-${escapeHtml(v.id)}">${escapeHtml(v.icon)} ${escapeHtml(v.name)}</label>
+    </div>`).join('') : '<span class="text-muted">owner の Vault がありません</span>';
+  modal('tokens-modal').show();
+  await renderTokens();
+}
+
 // --- ログイン中の端末 / 自分の履歴 ------------------------------------------
 
 const SESSION_KIND_LABELS = { web: '🖥 画面', extension: '🧩 Chrome 拡張', cli: '⌨ CLI' };
@@ -1191,6 +1227,18 @@ function wire() {
         showError('pw-error', null);
         document.getElementById('password-form').reset();
         modal('password-modal').show();
+      } else if (action === 'open-tokens') {
+        await openTokens();
+      } else if (action === 'revoke-token') {
+        const row = button.closest('[data-token-id]');
+        if (!window.confirm('このトークンを失効させます。使っている cron などは読めなくなります。よろしいですか？')) return;
+        showError('tokens-error', null);
+        await apiFetch(`/api/tokens/${encodeURIComponent(row.dataset.tokenId)}`, { method: 'DELETE' });
+        await renderTokens();
+        toast('失効させました', 'success');
+      } else if (action === 'copy-token') {
+        await copyToClipboard(document.getElementById('token-value').value);
+        toast('コピーしました', 'success');
       } else if (action === 'open-checkup') {
         await openCheckup();
       } else if (action === 'run-checkup') {
@@ -1316,7 +1364,9 @@ function wire() {
         toast('外しました', 'success');
       }
     } catch (err) {
-      if (action === 'run-checkup') {
+      if (action === 'revoke-token') {
+        showError('tokens-error', err.message);
+      } else if (action === 'run-checkup') {
         showError('checkup-error', err.message);
         document.getElementById('checkup-status').textContent = '';
       } else if (['revoke-session', 'revoke-other-sessions'].includes(action)) showError('sessions-error', err.message);
@@ -1360,6 +1410,33 @@ function wire() {
       showError('members-error', err.message);
       await renderMembers();
     }
+  });
+
+  document.getElementById('token-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    showError('tokens-error', null);
+    try {
+      const vaultIds = [...document.querySelectorAll('#token-vaults input:checked')].map((i) => i.value);
+      const { token } = await apiFetch('/api/tokens', {
+        method: 'POST',
+        body: {
+          name: document.getElementById('token-name').value.trim(),
+          vaultIds,
+          expiresInDays: Number(document.getElementById('token-days').value)
+        }
+      });
+      document.getElementById('token-value').value = token;
+      document.getElementById('token-issued').classList.remove('d-none');
+      document.getElementById('token-form').reset();
+      await renderTokens();
+    } catch (err) {
+      showError('tokens-error', err.message);
+    }
+  });
+  // 閉じたら、表示していたトークンを画面から消す
+  document.getElementById('tokens-modal').addEventListener('hidden.bs.modal', () => {
+    document.getElementById('token-value').value = '';
+    document.getElementById('token-issued').classList.add('d-none');
   });
 
   document.getElementById('activity-filter').addEventListener('click', (event) => {

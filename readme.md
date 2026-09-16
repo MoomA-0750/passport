@@ -40,6 +40,7 @@ scrypt、HMAC が入っているので、1Password 相当の鍵階層はこれ�
 - 監査ログ（誰がいつどのアイテムのどのフィールドを見たか）
 - 無操作での画面ロック
 - **ログイン中の端末**の一覧と切断（画面・Chrome 拡張・CLI の別、最後の操作、接続元）
+- **CLI**（`bin/passport`。`passport read "Vault/アイテム"` で秘密を1つ出す）と、cron などから使う**自動化トークン**（Vault を限定・読み取りだけ・期限必須）
 - **点検**（弱い・使い回し・1年以上変えていないパスワード、ローテーション周期と有効期限の期限切れ・期限間近。期限はナビのバッジにも出る）
 - **自分の履歴**（自分の操作、自分のアカウントへのログイン試行やパスワードのリセット、自分が owner の Vault でほかの人が見た・コピーした記録）
 
@@ -65,6 +66,37 @@ OpenSSH のワイヤ形式を自前で読み書きしている。
 生成した鍵にパスフレーズは掛けていない。掛けるには bcrypt_pbkdf が要り、標準ライブラリだけでは重い。
 Passport 側が保管時に暗号化しているので、掛けたい場合は取り出したあとに
 `ssh-keygen -p -f <ファイル>` を使う。
+
+## CLI と自動化トークン
+
+`bin/passport` は Node の標準ライブラリだけで動く。サーバーと同じリポジトリを手元に置くか、このファイルだけをコピーして使う。
+
+```bash
+# 人: 対話ログイン（自己署名なら --ca で証明書を渡す）
+bin/passport login --url https://passport.example.local --ca tls/server.crt
+bin/passport vaults
+bin/passport ls 共通インフラ
+bin/passport read "共通インフラ/vCenter"            # password
+bin/passport read "共通インフラ/vCenter/username"
+bin/passport totp "共通インフラ/vCenter"
+bin/passport logout
+
+# スクリプトから（パイプでは末尾に改行を付けない）
+export PGPASSWORD="$(bin/passport read '本番/DB')"
+```
+
+自動化（cron・デプロイ）は、金庫の画面の右上メニュー「自動化トークン」で発行したトークンを使う。
+Vault を選び、期限（最長1年）を決める。発行できるのは、選んだ Vault すべての owner。
+
+```bash
+PASSPORT_URL=https://passport.example.local PASSPORT_CA=/etc/passport/ca.crt \
+PASSPORT_TOKEN=pp_... bin/passport read "本番/DB"
+```
+
+- トークンでできるのは、選んだ Vault の読み出しだけ（書き込み・ほかの Vault・管理はできない）
+- 発行した人が、その Vault の owner でなくなる・無効化されると、トークンも使えなくなる
+- 読み出しはトークンの名前付きで監査ログに残る。管理画面の「自動化トークン」で全部を見て失効させられる
+- 使わないなら `passport.ini` の `[cli] enabled = off`（人の CLI）/ `tokens = off`（自動化トークン）で止める
 
 ## Chrome 拡張
 
@@ -465,6 +497,8 @@ node --test
 - グループに owner は付けられず、ファイルに書かれていても editor として扱う。グループ経由の editor は
   完全削除・Vault の削除・共有の変更ができない
 - admin は自分をグループに入れられない、使われているグループは消せない、消えたグループの ID は誰にも権限を与えない
+- 自動化トークンが /api/automation/ の外（パスの書き方を変えても）・対象外の Vault・書き込みに届かない。失効・期限切れ・発行者の権限の変更・無効化で即座に使えなくなる。サーバーに秘密が残らない
+- CLI のセッションファイルが 0600 で、ほかの人から読める権限なら使わない。自己署名の証明書を --ca なしでは信用しない
 - 点検が、editor 以上の Vault だけを調べ、ほかの Vault との一致・値・ハッシュを出さず、data/ に何も残さない。監査ログに書けなければ結果を返さない
 - ログイン中の端末の一覧にセッション ID が出ない、他人の端末は切れない、切った端末は 401 になる
 - 自分の履歴に、editor / viewer として入っている Vault でのほかの人の操作や、ほかの人の接続元が出ない

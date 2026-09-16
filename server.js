@@ -19,6 +19,7 @@ const http = require('./lib/http');
 const template = require('./lib/template');
 const api = require('./lib/api');
 const integrity = require('./lib/integrity');
+const tokens = require('./lib/tokens');
 
 const STATIC_DIR = path.join(__dirname, 'static');
 
@@ -172,7 +173,22 @@ async function handleRequest(req, res) {
     //   ・Chrome拡張: Authorization: Bearer <トークン>（勝手に付いてこないので CSRF 対策が要らない）
     // どちらで来たかを覚えておく。Bearer のときだけ CSRF 検証を省く。
     const bearer = readBearerToken(req);
-    const sessionId = bearer || session.sessionIdFromRequest(req);
+    // 自動化トークン（pp_ で始まる）は、セッションとは別に確かめる。
+    // 使えるのは /api/automation/ の下だけ。ほかの API・画面には、どんな形でも届かせない。
+    // 形で見分ける（セッション ID が偶然 pp_ で始まっても、形が違うのでセッションとして扱われる）
+    const isAutomationToken = !!bearer && tokens.TOKEN_RE.test(bearer);
+    if (isAutomationToken && !parsed.pathname.startsWith('/api/automation/')) {
+      http.sendJson(req, res, 401, { error: '自動化トークンでは使えない API です' });
+      done();
+      return;
+    }
+    const automation = isAutomationToken ? tokens.authenticate(bearer, { ip: http.clientIp(req) }) : null;
+    if (isAutomationToken && !automation) {
+      http.sendJson(req, res, 401, { error: 'トークンが使えません（期限切れ・失効・権限の変更など）' });
+      done();
+      return;
+    }
+    const sessionId = isAutomationToken ? null : (bearer || session.sessionIdFromRequest(req));
     const current = session.touch(sessionId, { ip: http.clientIp(req) });
     const user = current ? users.toPublic(users.get(current.userId)) : null;
 
@@ -202,6 +218,7 @@ async function handleRequest(req, res) {
       user,
       ip: http.clientIp(req),
       viaBearer: !!bearer,
+      automation,
       body: {},
       setCookie: null
     };
@@ -244,7 +261,8 @@ async function handleRequest(req, res) {
         // 以前は Authorization ヘッダーの「形」だけで免除していたので、
         // でたらめな Bearer を付ければ Origin もトークンも見られなかった
         // （ブラウザからは到達できず実害は無かったが、外から自由に作れる条件に乗っていた）。
-        const isExtensionCall = (ctx.viaBearer && !!current)
+        // 自動化トークンも Bearer で来て、実在して使えるときだけ免除する
+        const isExtensionCall = (ctx.viaBearer && (!!current || !!automation))
           || (isPreAuth && http.allowedExtensionOrigin(req.headers.origin));
         const csrfResult = isExtensionCall
           ? { ok: true }

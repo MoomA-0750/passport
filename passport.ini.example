@@ -50,3 +50,9 @@ enabled = on
 ; 拡張を作り直して ID が変わったら、chrome://extensions で見える ID に書き換える。
 ; 空にすると、どの拡張からでも通ってしまうので空にしない。
 allowedIds = iookbapfomcndnncbdohnhblclbhmfoc
+
+[cli]
+; 人の CLI（passport login）を許す。拡張と違って呼び出し元を絞れないので、使わないなら off にする。
+enabled = on
+; 自動化トークン（cron などから PASSPORT_TOKEN で読む）を許す。off にすると発行済みのトークンも使えなくなる。
+tokens = on

@@ -1,0 +1,414 @@
+#!/usr/bin/env node
+'use strict';
+// Passport の CLI。Node 標準ライブラリだけで動く。
+//
+//   passport login [--url https://passport.example.local] [--ca ca.pem] [--user NAME]
+//   passport logout | whoami
+//   passport vaults
+//   passport ls <Vault>
+//   passport read "<Vault>/<アイテム>[/<フィールド>]"     … フィールドの既定は password
+//   passport totp "<Vault>/<アイテム>"
+//
+// 名前は ID でも指定できる。名前に / を含むときは --vault / --item / --field で渡す。
+//
+// 認証は2通り:
+//   ・人: passport login で対話ログイン。サーバーのセッション（既定8時間、最長24時間）を
+//         ~/.config/passport/session.json に 0600 で保存する
+//   ・自動化: 環境変数 PASSPORT_TOKEN に自動化トークン（pp_...）を入れる。ファイルには保存しない
+//
+// 接続先と証明書: --url / --ca、環境変数 PASSPORT_URL / PASSPORT_CA、または ~/.config/passport/config.json。
+// 自己署名の証明書は --ca で CA（または証明書そのもの）のファイルを渡す。検証を切る手段は用意しない。
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const https = require('https');
+
+const EXIT = { ok: 0, error: 1, usage: 2, auth: 3 };
+const SECRET_FIELDS = /^(password|totp|note|privateKey|passphrase|custom:[A-Za-z0-9_-]{1,64})$/;
+
+class CliError extends Error {
+  constructor(message, code = EXIT.error) {
+    super(message);
+    this.exitCode = code;
+  }
+}
+
+// --- 引数 --------------------------------------------------------------------
+
+function parseArgs(argv) {
+  const positional = [];
+  const options = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '-h' || arg === '--help') {
+      options.help = true;
+    } else if (arg.startsWith('--')) {
+      const eq = arg.indexOf('=');
+      if (eq > 0) {
+        options[arg.slice(2, eq)] = arg.slice(eq + 1);
+      } else if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+        options[arg.slice(2)] = argv[i + 1];
+        i += 1;
+      } else {
+        options[arg.slice(2)] = true;
+      }
+    } else {
+      positional.push(arg);
+    }
+  }
+  return { positional, options };
+}
+
+// --- 設定とセッションのファイル ---------------------------------------------------
+
+function configDir() {
+  const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  return path.join(base, 'passport');
+}
+
+function ensureConfigDir() {
+  const dir = configDir();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  return dir;
+}
+
+function readPrivateJson(file) {
+  if (!fs.existsSync(file)) return null;
+  const mode = fs.statSync(file).mode & 0o777;
+  if (mode & 0o077) {
+    throw new CliError(`${file} がほかの人から読める権限になっています（${mode.toString(8)}）。chmod 600 にするか、消してログインし直してください`);
+  }
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    throw new CliError(`${file} を読めません。消してログインし直してください`);
+  }
+}
+
+function writePrivateJson(file, data) {
+  ensureConfigDir();
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, file);
+}
+
+const configFile = () => path.join(configDir(), 'config.json');
+const sessionFile = () => path.join(configDir(), 'session.json');
+
+function resolveTarget(options) {
+  const saved = readPrivateJson(configFile()) || {};
+  const url = options.url || process.env.PASSPORT_URL || saved.url;
+  const ca = options.ca || process.env.PASSPORT_CA || saved.caFile || null;
+  if (!url) throw new CliError('接続先が決まっていません。--url か PASSPORT_URL で指定してください', EXIT.usage);
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new CliError(`接続先の URL を解釈できません: ${url}`, EXIT.usage);
+  }
+  if (!['https:', 'http:'].includes(parsed.protocol)) throw new CliError('接続先は https:// で指定してください', EXIT.usage);
+  // http は手元（loopback）だけ。ほかは --allow-http（または PASSPORT_ALLOW_HTTP=1）を明示したときだけ通す。
+  // cron では警告を誰も見ないので、警告だけでは、トークンと秘密が毎回平文で流れ続けることになる
+  if (parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) {
+    if (!options['allow-http'] && process.env.PASSPORT_ALLOW_HTTP !== '1') {
+      throw new CliError('http:// ではパスワードとトークンが平文でネットワークを流れるので接続しません。https:// を使ってください'
+        + '（どうしても必要なら --allow-http）', EXIT.usage);
+    }
+    process.stderr.write('警告: http で接続します。パスワードとトークンが平文でネットワークを流れます\n');
+  }
+  return { url: parsed.origin, ca };
+}
+
+// --- HTTP --------------------------------------------------------------------
+
+function request(target, method, pathname, { body, bearer, headers = {} } = {}) {
+  const base = new URL(target.url);
+  const lib = base.protocol === 'https:' ? https : http;
+  const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+  const options = {
+    method,
+    hostname: base.hostname,
+    port: base.port || (base.protocol === 'https:' ? 443 : 80),
+    path: pathname,
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': `passport-cli node/${process.versions.node}`,
+      'X-Passport-Client': 'cli',
+      ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
+      // ログインと書き込みは Origin を確かめられる（CSRF 対策）。接続先そのものを名乗る
+      Origin: target.url,
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      ...headers
+    },
+    timeout: 15000
+  };
+  if (base.protocol === 'https:' && target.ca) {
+    try {
+      options.ca = fs.readFileSync(target.ca);
+    } catch (err) {
+      throw new CliError(`CA のファイルを読めません: ${target.ca}: ${err.message}`, EXIT.usage);
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const req = lib.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // JSON でない
+        }
+        resolve({ status: res.statusCode, json, text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('応答がありません（15秒）')));
+    req.on('error', (err) => {
+      if (/self[- ]signed|unable to verify|UNABLE_TO_GET_ISSUER|DEPTH_ZERO/i.test(`${err.code} ${err.message}`)) {
+        reject(new CliError(`サーバーの証明書を確かめられません（${err.code || err.message}）。自己署名なら --ca で証明書のファイルを渡してください`));
+      } else {
+        reject(new CliError(`接続できません: ${err.message}`));
+      }
+    });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function api(ctx, method, pathname, body) {
+  const res = await request(ctx.target, method, pathname, { body, bearer: ctx.bearer });
+  if (res.status === 401) {
+    throw new CliError(ctx.kind === 'token'
+      ? 'トークンが使えません（期限切れ・失効・権限の変更など）'
+      : 'ログインが切れています。passport login でログインし直してください', EXIT.auth);
+  }
+  if (res.status >= 400) {
+    throw new CliError((res.json && res.json.error) || `サーバーがエラーを返しました（${res.status}）`);
+  }
+  return res.json;
+}
+
+// --- 認証情報 -----------------------------------------------------------------
+
+function loadCredential(options) {
+  if (process.env.PASSPORT_TOKEN) {
+    return { kind: 'token', bearer: process.env.PASSPORT_TOKEN.trim(), target: resolveTarget(options) };
+  }
+  const saved = readPrivateJson(sessionFile());
+  if (!saved || !saved.token) throw new CliError('ログインしていません。passport login でログインしてください', EXIT.auth);
+  if (saved.expiresAt && Date.parse(saved.expiresAt) <= Date.now()) {
+    throw new CliError('ログインが切れています。passport login でログインし直してください', EXIT.auth);
+  }
+  const target = resolveTarget({ ...options, url: options.url || saved.url });
+  return { kind: 'user', bearer: saved.token, target };
+}
+
+function prompt(question, { hidden = false } = {}) {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    if (hidden && !stdin.isTTY) {
+      // パイプで渡された場合（テストや、パスワードマネージャーからの受け渡し）
+      let data = '';
+      stdin.setEncoding('utf8');
+      stdin.on('data', (c) => { data += c; });
+      stdin.on('end', () => resolve(data.replace(/\r?\n$/, '')));
+      stdin.on('error', reject);
+      return;
+    }
+    process.stderr.write(question);
+    if (!hidden) {
+      const rl = require('readline').createInterface({ input: stdin, output: process.stderr, terminal: false });
+      rl.once('line', (line) => { rl.close(); resolve(line); });
+      return;
+    }
+    let value = '';
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n' || ch === '') {
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdin.removeListener('data', onData);
+          process.stderr.write('\n');
+          resolve(value);
+          return;
+        }
+        if (ch === '') {
+          stdin.setRawMode(false);
+          process.stderr.write('\n');
+          reject(new CliError('中止しました'));
+          return;
+        }
+        if (ch === '' || ch === '\b') value = value.slice(0, -1);
+        else value += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+// --- 名前の解決 ---------------------------------------------------------------
+
+function pickOne(list, wanted, what, label) {
+  const byId = list.filter((x) => x.id === wanted);
+  if (byId.length === 1) return byId[0];
+  const byName = list.filter((x) => label(x) === wanted);
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    throw new CliError(`「${wanted}」という${what}が ${byName.length} 個あります。ID で指定してください:\n`
+      + byName.map((x) => `  ${x.id}`).join('\n'));
+  }
+  throw new CliError(`${what}「${wanted}」が見つかりません`);
+}
+
+function splitRef(ref, options, { withField }) {
+  if (options.vault || options.item) {
+    return { vault: options.vault, item: options.item, field: options.field || null };
+  }
+  const parts = String(ref || '').split('/');
+  if (parts.length < 2) throw new CliError('"<Vault>/<アイテム>" の形で指定してください', EXIT.usage);
+  if (withField && parts.length >= 3) {
+    return { vault: parts[0], item: parts.slice(1, -1).join('/'), field: parts[parts.length - 1] };
+  }
+  return { vault: parts[0], item: parts.slice(1).join('/'), field: null };
+}
+
+async function resolveItem(ctx, ref, options, { withField }) {
+  const parsed = splitRef(ref, options, { withField });
+  const { vaults } = await api(ctx, 'GET', '/api/automation/vaults');
+  const vault = pickOne(vaults, parsed.vault, 'Vault', (v) => v.name);
+  const { items } = await api(ctx, 'GET', `/api/automation/vaults/${encodeURIComponent(vault.id)}/items`);
+  const item = pickOne(items, parsed.item, 'アイテム', (i) => i.title);
+  return { vault, item, field: parsed.field };
+}
+
+function writeValue(value) {
+  // 端末に出すときだけ改行を付ける。$(passport read ...) では末尾の改行が混ざらないように
+  process.stdout.write(process.stdout.isTTY ? `${value}\n` : String(value));
+}
+
+// --- コマンド -----------------------------------------------------------------
+
+const commands = {
+  async login(args, options) {
+    if (process.env.PASSPORT_TOKEN) {
+      throw new CliError('PASSPORT_TOKEN が設定されています。人としてログインするなら外してください', EXIT.usage);
+    }
+    const target = resolveTarget(options);
+    const username = options.user || await prompt('ユーザー名: ');
+    const password = await prompt('パスワード: ', { hidden: true });
+    const res = await request(target, 'POST', '/api/login', { body: { username, password } });
+    if (res.status !== 200 || !res.json || !res.json.token) {
+      throw new CliError((res.json && res.json.error) || `ログインできませんでした（${res.status}）`, EXIT.auth);
+    }
+    if (res.json.mustChangePassword) {
+      process.stderr.write('初期パスワードのままです。画面からログインしてパスワードを変えてください\n');
+    }
+    writePrivateJson(configFile(), { url: target.url, caFile: target.ca ? path.resolve(target.ca) : null });
+    writePrivateJson(sessionFile(), {
+      url: target.url,
+      username: res.json.user.username,
+      token: res.json.token,
+      expiresAt: new Date(Date.now() + (res.json.expiresInSeconds || 8 * 3600) * 1000).toISOString()
+    });
+    process.stderr.write(`${res.json.user.username} としてログインしました\n`);
+  },
+
+  async logout(args, options) {
+    const file = sessionFile();
+    const saved = fs.existsSync(file) ? readPrivateJson(file) : null;
+    if (saved && saved.token) {
+      try {
+        const target = resolveTarget({ ...options, url: options.url || saved.url });
+        await request(target, 'POST', '/api/logout', { body: {}, bearer: saved.token });
+      } catch {
+        // サーバーに届かなくても、手元のトークンは消す
+      }
+    }
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    process.stderr.write('ログアウトしました\n');
+  },
+
+  async whoami(args, options) {
+    const ctx = loadCredential(options);
+    const me = await api(ctx, 'GET', '/api/automation/whoami');
+    if (me.kind === 'token') console.log(`自動化トークン「${me.name}」（期限 ${me.expiresAt}）`);
+    else console.log(`${me.username}（ログインの期限 ${me.expiresAt}）`);
+  },
+
+  async vaults(args, options) {
+    const ctx = loadCredential(options);
+    const { vaults } = await api(ctx, 'GET', '/api/automation/vaults');
+    for (const v of vaults) console.log(`${v.id}\t${v.role}\t${v.itemCount}件\t${v.name}`);
+  },
+
+  async ls(args, options) {
+    const ctx = loadCredential(options);
+    const wanted = options.vault || args[0];
+    if (!wanted) throw new CliError('passport ls <Vault>', EXIT.usage);
+    const { vaults } = await api(ctx, 'GET', '/api/automation/vaults');
+    const vault = pickOne(vaults, wanted, 'Vault', (v) => v.name);
+    const { items } = await api(ctx, 'GET', `/api/automation/vaults/${encodeURIComponent(vault.id)}/items`);
+    for (const i of items) console.log(`${i.id}\t${i.type}\t${i.title}\t${i.username || ''}\t${i.fields.join(',')}`);
+  },
+
+  async read(args, options) {
+    const ctx = loadCredential(options);
+    const { vault, item, field: refField } = await resolveItem(ctx, args[0], options, { withField: true });
+    const field = refField || 'password';
+    if (field === 'username') {
+      writeValue(item.username || '');
+      return;
+    }
+    if (!SECRET_FIELDS.test(field)) throw new CliError(`フィールド「${field}」は読めません（password / note / totp / privateKey / passphrase / username / custom:...）`, EXIT.usage);
+    if (!item.fields.includes(field)) throw new CliError(`「${item.title}」に ${field} はありません（あるもの: ${item.fields.join(', ') || 'なし'}）`);
+    const { value } = await api(ctx, 'POST',
+      `/api/automation/vaults/${encodeURIComponent(vault.id)}/items/${encodeURIComponent(item.id)}/read`, { field });
+    writeValue(value);
+  },
+
+  async totp(args, options) {
+    const ctx = loadCredential(options);
+    const { vault, item } = await resolveItem(ctx, args[0], options, { withField: false });
+    const result = await api(ctx, 'POST',
+      `/api/automation/vaults/${encodeURIComponent(vault.id)}/items/${encodeURIComponent(item.id)}/totp`, {});
+    writeValue(result.code);
+  }
+};
+
+const HELP = `使い方:
+  passport login [--url URL] [--ca CA.pem] [--user NAME]   対話ログイン
+  passport logout                                           ログアウト（手元のトークンも消す）
+  passport whoami                                           誰として使っているか
+  passport vaults                                           読める Vault の一覧
+  passport ls <Vault>                                       アイテムの一覧（ID・種別・タイトル・ユーザー名・フィールド）
+  passport read "<Vault>/<アイテム>[/<フィールド>]"         秘密を1つ出す（既定は password）
+  passport totp "<Vault>/<アイテム>"                        ワンタイムパスワードを出す
+
+  名前に / を含むときは --vault / --item / --field で渡す。名前の代わりに ID も使える。
+  自動化では PASSPORT_TOKEN に自動化トークンを入れる（ファイルには保存しない）。
+  接続先: --url / PASSPORT_URL、証明書: --ca / PASSPORT_CA（http:// は手元だけ。ほかは --allow-http が要る）
+  秘密を出したことは、サーバーの監査ログに残る。`;
+
+async function main() {
+  const { positional, options } = parseArgs(process.argv.slice(2));
+  const [name, ...rest] = positional;
+  if (!name || options.help || !commands[name]) {
+    process.stderr.write(`${HELP}\n`);
+    process.exit(name && !commands[name] ? EXIT.usage : EXIT.ok);
+  }
+  await commands[name](rest, options);
+}
+
+main().catch((err) => {
+  process.stderr.write(`passport: ${err instanceof CliError ? err.message : err.stack}\n`);
+  process.exit(err instanceof CliError ? err.exitCode : EXIT.error);
+});

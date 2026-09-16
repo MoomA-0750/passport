@@ -108,6 +108,22 @@ function openGroupModal(group) {
   modal('group-modal').show();
 }
 
+// --- 自動化トークン -----------------------------------------------------------
+
+async function loadTokens() {
+  const { tokens } = await apiFetch('/api/tokens');
+  document.getElementById('admin-tokens-tbody').innerHTML = tokens.length ? tokens.map((t) => `
+    <tr data-token-id="${escapeHtml(t.id)}">
+      <td>${escapeHtml(t.name)}</td>
+      <td>${t.vaults.map((v) => escapeHtml(v.name)).join('、')}</td>
+      <td class="text-nowrap">${escapeHtml(t.createdBy)}<div class="text-muted">${escapeHtml(formatDateTime(t.createdAt))}</div></td>
+      <td class="text-nowrap">${escapeHtml(formatDateTime(t.expiresAt))}</td>
+      <td class="text-nowrap">${t.lastUsedAt ? `${escapeHtml(formatDateTime(t.lastUsedAt))}<div class="text-muted font-monospace">${escapeHtml(t.lastUsedIp || '')}</div>` : '<span class="text-muted">未使用</span>'}</td>
+      <td><span class="badge bg-${t.status === 'active' ? 'success' : 'secondary'}">${escapeHtml(t.statusLabel)}</span></td>
+      <td class="text-end">${t.revokedAt ? '' : '<button class="btn btn-sm btn-outline-danger" type="button" data-action="revoke-token">失効</button>'}</td>
+    </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">トークンはありません</td></tr>';
+}
+
 // --- 監査ログ ---------------------------------------------------------------
 
 async function loadAudit() {
@@ -164,6 +180,7 @@ document.body.addEventListener('click', async (event) => {
   const action = button.dataset.action;
   const row = button.closest('[data-user-id]');
   const groupCard = button.closest('[data-group-id]');
+  const tokenRow = button.closest('[data-token-id]');
 
   try {
     if (action === 'new-user') {
@@ -193,6 +210,13 @@ document.body.addEventListener('click', async (event) => {
       await apiFetch(`/api/groups/${groupCard.dataset.groupId}/members/${row.dataset.userId}`, { method: 'DELETE' });
       toast('外しました', 'success');
       await loadGroups();
+    } else if (action === 'reload-tokens') {
+      await loadTokens();
+    } else if (action === 'revoke-token') {
+      if (!window.confirm('このトークンを失効させます。よろしいですか？')) return;
+      await apiFetch(`/api/tokens/${encodeURIComponent(tokenRow.dataset.tokenId)}`, { method: 'DELETE' });
+      toast('失効させました', 'success');
+      await loadTokens();
     } else if (action === 'reload-audit') {
       await loadAudit();
       toast('更新しました');
@@ -277,6 +301,7 @@ document.getElementById('user-form').addEventListener('submit', async (event) =>
     myUserId = (await apiFetch('/api/me')).user.id;
     await loadUsers();
     await loadGroups();
+    await loadTokens();
     await loadAudit();
   } catch (err) {
     toast(err.message, 'danger');

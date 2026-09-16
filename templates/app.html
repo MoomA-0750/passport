@@ -19,6 +19,7 @@
         <li><button class="dropdown-item" type="button" data-action="open-password-change">パスワードを変更</button></li>
         <li><button class="dropdown-item" type="button" data-action="open-sessions">ログイン中の端末</button></li>
         <li><button class="dropdown-item" type="button" data-action="open-activity">自分の履歴</button></li>
+        <li><button class="dropdown-item" type="button" data-action="open-tokens">自動化トークン</button></li>
         <li><button class="dropdown-item" type="button" data-action="lock-now">画面をロック</button></li>
         <li id="nav-admin-item" class="d-none"><hr class="dropdown-divider"></li>
         <li id="nav-admin-link" class="d-none"><a class="dropdown-item" href="/admin">ユーザーと監査ログ</a></li>
@@ -439,6 +440,64 @@
           <div id="checkup-result"></div>
         </section>
         <div class="alert alert-danger d-none mt-3" id="checkup-error"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自動化トークン -->
+<div class="modal fade" id="tokens-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">自動化トークン</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          cron やデプロイから <code>PASSPORT_TOKEN=... passport read "Vault/アイテム"</code> で秘密を読むためのトークンです。
+          決めた Vault を読むことしかできず、期限は必須（最長1年）です。発行できるのは、対象の Vault すべての owner です。
+          発行した人が対象の Vault の owner でなくなる・無効化されると、そのトークンは使えなくなります。
+        </p>
+        <form class="border rounded p-3 mb-3" id="token-form" autocomplete="off">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label" for="token-name">名前（どこで使うか）</label>
+              <input class="form-control" id="token-name" maxlength="64" required placeholder="例: 夜間バックアップ">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">読める Vault（owner のものだけ）</label>
+              <div id="token-vaults" class="small"></div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label" for="token-days">期限</label>
+              <select class="form-select" id="token-days">
+                <option value="7">7日</option>
+                <option value="30">30日</option>
+                <option value="90" selected>90日</option>
+                <option value="180">180日</option>
+                <option value="365">1年</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-primary w-100" type="submit">発行</button>
+            </div>
+          </div>
+        </form>
+        <div class="alert alert-warning d-none" id="token-issued">
+          <div class="fw-bold mb-1">このトークンは今だけ表示します。控えてから閉じてください。</div>
+          <div class="input-group">
+            <input class="form-control font-monospace" id="token-value" readonly>
+            <button class="btn btn-outline-secondary" type="button" data-action="copy-token">コピー</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle small">
+            <thead><tr><th>名前</th><th>読める Vault</th><th>発行</th><th>期限</th><th>最後に使った</th><th>状態</th><th></th></tr></thead>
+            <tbody id="tokens-tbody"></tbody>
+          </table>
+        </div>
+        <div class="alert alert-danger d-none mt-3" id="tokens-error"></div>
       </div>
     </div>
   </div>
