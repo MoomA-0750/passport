@@ -97,7 +97,7 @@ function renderVaults() {
         <span class="vault-icon">${escapeHtml(vault.icon)}</span>
         <span class="vault-body">
           <span class="vault-name">${escapeHtml(vault.name)}</span>
-          <span class="vault-meta">${vault.itemCount}件・${escapeHtml(vault.role)}${vault.memberCount > 1 ? `・${vault.memberCount}人` : ''}</span>
+          <span class="vault-meta">${vault.itemCount}件・${escapeHtml(vault.role)}${vault.viaGroup ? '（グループ）' : ''}${vault.memberCount > 1 ? `・${vault.memberCount}人` : ''}${vault.groupCount ? `・👥${vault.groupCount}` : ''}</span>
         </span>
       </button>
     </li>
@@ -709,6 +709,9 @@ const ROLE_LABELS = {
   owner: 'owner（共有も管理できる）'
 };
 
+// グループに付けられるのは viewer / editor だけ（owner は人にだけ。lib/vaults.js の冒頭を参照）
+const GROUP_ROLE_LABELS = { viewer: ROLE_LABELS.viewer, editor: ROLE_LABELS.editor };
+
 async function openMembers() {
   const vault = currentVault();
   if (!vault) return;
@@ -743,6 +746,43 @@ async function renderMembers() {
       </td>
     </tr>
   `).join('');
+
+  document.getElementById('member-groups-tbody').innerHTML = data.groups.length ? data.groups.map((g) => `
+    <tr data-group-id="${escapeHtml(g.groupId)}">
+      <td>
+        👥 ${escapeHtml(g.name)} <span class="text-muted small">${g.memberCount}人</span>
+        ${g.members && g.members.length ? `<div class="text-muted small">${g.members.map((m) =>
+          `${escapeHtml(m.displayName)} @${escapeHtml(m.username)}`).join('、')}</div>` : ''}
+      </td>
+      <td style="width:10rem">
+        ${isOwner ? `
+          <select class="form-select form-select-sm" data-action="change-group-role">
+            ${Object.entries(GROUP_ROLE_LABELS).map(([value, label]) =>
+              `<option value="${value}" ${g.role === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select>` : escapeHtml(g.role)}
+      </td>
+      <td class="text-end" style="width:5rem">
+        ${isOwner ? '<button class="btn btn-sm btn-outline-danger" type="button" data-action="remove-member-group">外す</button>' : ''}
+      </td>
+    </tr>
+  `).join('') : '<tr><td class="text-muted small">グループでの共有はありません</td></tr>';
+
+  const groupAddArea = document.getElementById('member-groups-add-area');
+  if (isOwner && data.groupCandidates.length) {
+    groupAddArea.classList.remove('d-none');
+    document.getElementById('member-group').innerHTML = data.groupCandidates.map((g) =>
+      `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}（${g.memberCount}人）</option>`).join('');
+  } else {
+    groupAddArea.classList.add('d-none');
+  }
+
+  const viaGroups = (data.mySources || []).filter((s) => s.type === 'group');
+  document.getElementById('my-role-sources').textContent = viaGroups.length
+    ? `あなたはグループ経由でも入っています（${viaGroups.map((s) => {
+      const g = data.groups.find((x) => x.groupId === s.groupId);
+      return `${g ? g.name : '?'}: ${s.role}`;
+    }).join('、')}）`
+    : '';
 
   const addArea = document.getElementById('members-add-area');
   if (isOwner && data.candidates.length) {
@@ -1070,6 +1110,26 @@ function wire() {
         await renderMembers();
         await loadVaults();
         toast('メンバーを追加しました', 'success');
+      } else if (action === 'add-member-group') {
+        showError('members-error', null);
+        await apiFetch(`/api/vaults/${state.vaultId}/groups`, {
+          method: 'POST',
+          body: {
+            groupId: document.getElementById('member-group').value,
+            role: document.getElementById('member-group-role').value
+          }
+        });
+        await renderMembers();
+        await loadVaults();
+        toast('グループを追加しました', 'success');
+      } else if (action === 'remove-member-group') {
+        const row = button.closest('[data-group-id]');
+        if (!window.confirm('このグループを Vault から外します。グループ経由で入っていた人は入れなくなります。')) return;
+        showError('members-error', null);
+        await apiFetch(`/api/vaults/${state.vaultId}/groups/${row.dataset.groupId}`, { method: 'DELETE' });
+        await renderMembers();
+        await loadVaults();
+        toast('外しました', 'success');
       } else if (action === 'remove-member') {
         const row = button.closest('[data-user-id]');
         if (!window.confirm('この人を Vault から外します。よろしいですか？')) return;
@@ -1080,7 +1140,7 @@ function wire() {
         toast('外しました', 'success');
       }
     } catch (err) {
-      if (['add-member', 'remove-member'].includes(action)) showError('members-error', err.message);
+      if (['add-member', 'remove-member', 'add-member-group', 'remove-member-group'].includes(action)) showError('members-error', err.message);
       else toast(err.message, 'danger');
     }
   });
@@ -1093,6 +1153,24 @@ function wire() {
     try {
       showError('members-error', null);
       await apiFetch(`/api/vaults/${state.vaultId}/members/${row.dataset.userId}`, {
+        method: 'PUT', body: { role: select.value }
+      });
+      await renderMembers();
+      await loadVaults();
+      toast('権限を変えました', 'success');
+    } catch (err) {
+      showError('members-error', err.message);
+      await renderMembers();
+    }
+  });
+
+  document.getElementById('member-groups-tbody').addEventListener('change', async (event) => {
+    const select = event.target.closest('[data-action="change-group-role"]');
+    if (!select) return;
+    const row = select.closest('[data-group-id]');
+    try {
+      showError('members-error', null);
+      await apiFetch(`/api/vaults/${state.vaultId}/groups/${row.dataset.groupId}`, {
         method: 'PUT', body: { role: select.value }
       });
       await renderMembers();

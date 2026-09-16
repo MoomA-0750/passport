@@ -1,5 +1,5 @@
 'use strict';
-// 管理画面。ユーザーの追加・権限変更と、監査ログの閲覧。
+// 管理画面。ユーザーの追加・権限変更、グループ、監査ログの閲覧。
 
 const { apiFetch, escapeHtml, showError, toast, formatDateTime, generatePassword } = window.KBUtil;
 
@@ -10,11 +10,14 @@ function modal(id) {
 }
 
 let auditEntries = [];
+let allUsers = [];
+let myUserId = null;
 
 // --- ユーザー ---------------------------------------------------------------
 
 async function loadUsers() {
   const { users } = await apiFetch('/api/users');
+  allUsers = users;
   document.getElementById('users-tbody').innerHTML = users.map((user) => `
     <tr data-user-id="${escapeHtml(user.id)}">
       <td class="font-monospace">${escapeHtml(user.username)}</td>
@@ -43,6 +46,66 @@ async function loadUsers() {
       </td>
     </tr>
   `).join('');
+}
+
+// --- グループ ---------------------------------------------------------------
+
+async function loadGroups() {
+  const { groups } = await apiFetch('/api/groups');
+  const list = document.getElementById('groups-list');
+  if (!groups.length) {
+    list.innerHTML = '<p class="text-muted">グループはまだありません</p>';
+    return;
+  }
+  list.innerHTML = groups.map((group) => {
+    const inGroup = new Set(group.members.map((m) => m.userId));
+    // 自分自身はグループに入れられない（サーバーでも断る。緊急アクセスの迂回になるため）
+    const candidates = allUsers.filter((u) => u.status === 'active' && !inGroup.has(u.id) && u.id !== myUserId);
+    return `
+    <div class="card mb-3" data-group-id="${escapeHtml(group.id)}">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          <strong>${escapeHtml(group.name)}</strong>
+          <span class="text-muted small ms-2">${escapeHtml(group.description)}</span>
+        </div>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-secondary" type="button" data-action="edit-group">名前を変える</button>
+          <button class="btn btn-outline-danger" type="button" data-action="delete-group">消す</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="mb-2 small">
+          <span class="text-muted">共有先:</span>
+          ${group.usedBy.length
+            ? group.usedBy.map((v) => `<span class="badge bg-light text-dark border me-1">${escapeHtml(v.name)}（${escapeHtml(v.role)}）</span>`).join('')
+            : '<span class="text-muted">どの Vault にも入っていません</span>'}
+        </div>
+        <ul class="list-group list-group-flush mb-2">
+          ${group.members.length ? group.members.map((m) => `
+            <li class="list-group-item d-flex justify-content-between align-items-center px-0" data-user-id="${escapeHtml(m.userId)}">
+              <span>${escapeHtml(m.displayName)} <span class="text-muted small">@${escapeHtml(m.username)}</span></span>
+              <button class="btn btn-sm btn-outline-danger" type="button" data-action="remove-group-member">外す</button>
+            </li>`).join('') : '<li class="list-group-item px-0 text-muted">まだ誰もいません</li>'}
+        </ul>
+        ${candidates.length ? `
+        <div class="input-group input-group-sm" style="max-width:28rem">
+          <select class="form-select" data-role="group-member-candidate">
+            ${candidates.map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.displayName)} (@${escapeHtml(u.username)})</option>`).join('')}
+          </select>
+          <button class="btn btn-outline-primary" type="button" data-action="add-group-member">入れる</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openGroupModal(group) {
+  showError('group-error', null);
+  document.getElementById('group-modal-title').textContent = group ? 'グループを編集' : 'グループを作る';
+  document.getElementById('group-id').value = group ? group.id : '';
+  document.getElementById('group-name').value = group ? group.name : '';
+  document.getElementById('group-description').value = group ? group.description : '';
+  modal('group-modal').show();
 }
 
 // --- 監査ログ ---------------------------------------------------------------
@@ -100,6 +163,7 @@ document.body.addEventListener('click', async (event) => {
   if (!button) return;
   const action = button.dataset.action;
   const row = button.closest('[data-user-id]');
+  const groupCard = button.closest('[data-group-id]');
 
   try {
     if (action === 'new-user') {
@@ -109,6 +173,26 @@ document.body.addEventListener('click', async (event) => {
       modal('user-modal').show();
     } else if (action === 'generate-initial') {
       document.getElementById('new-password').value = generatePassword({ length: 20 });
+    } else if (action === 'new-group') {
+      openGroupModal(null);
+    } else if (action === 'edit-group') {
+      const { groups } = await apiFetch('/api/groups');
+      openGroupModal(groups.find((g) => g.id === groupCard.dataset.groupId));
+    } else if (action === 'delete-group') {
+      if (!window.confirm('このグループを消します。よろしいですか？')) return;
+      await apiFetch(`/api/groups/${groupCard.dataset.groupId}`, { method: 'DELETE' });
+      toast('消しました', 'success');
+      await loadGroups();
+    } else if (action === 'add-group-member') {
+      const userId = groupCard.querySelector('[data-role="group-member-candidate"]').value;
+      await apiFetch(`/api/groups/${groupCard.dataset.groupId}/members`, { method: 'POST', body: { userId } });
+      toast('グループに入れました', 'success');
+      await loadGroups();
+    } else if (action === 'remove-group-member') {
+      if (!window.confirm('この人をグループから外します。グループ経由で入っていた Vault には入れなくなります。')) return;
+      await apiFetch(`/api/groups/${groupCard.dataset.groupId}/members/${row.dataset.userId}`, { method: 'DELETE' });
+      toast('外しました', 'success');
+      await loadGroups();
     } else if (action === 'reload-audit') {
       await loadAudit();
       toast('更新しました');
@@ -148,6 +232,25 @@ document.getElementById('users-tbody').addEventListener('change', async (event) 
 
 document.getElementById('audit-filter').addEventListener('change', renderAudit);
 
+document.getElementById('group-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  showError('group-error', null);
+  const id = document.getElementById('group-id').value;
+  const body = {
+    name: document.getElementById('group-name').value.trim(),
+    description: document.getElementById('group-description').value.trim()
+  };
+  try {
+    if (id) await apiFetch(`/api/groups/${id}`, { method: 'PUT', body });
+    else await apiFetch('/api/groups', { method: 'POST', body });
+    modal('group-modal').hide();
+    toast('保存しました', 'success');
+    await loadGroups();
+  } catch (err) {
+    showError('group-error', err.message);
+  }
+});
+
 document.getElementById('user-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   showError('user-error', null);
@@ -171,7 +274,9 @@ document.getElementById('user-form').addEventListener('submit', async (event) =>
 
 (async () => {
   try {
+    myUserId = (await apiFetch('/api/me')).user.id;
     await loadUsers();
+    await loadGroups();
     await loadAudit();
   } catch (err) {
     toast(err.message, 'danger');

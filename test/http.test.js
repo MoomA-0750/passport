@@ -237,3 +237,69 @@ test('CSRF: トークンの無い Cookie 認証の書き込みは弾く', async 
   });
   assert.strictEqual(r.status, 403);
 });
+
+// --- グループ ---------------------------------------------------------------
+
+test('グループ: 管理者以外はグループを作れず、一覧も見られない', async () => {
+  const admin = client();
+  await admin.login('admin', 'admin-password-123');
+  await admin.call('/api/users', { method: 'POST', body: { username: 'plain', password: 'plain-password-12', role: 'member' } });
+  const plain = client({ ip: '10.0.0.21' });
+  await plain.login('plain', 'plain-password-12');
+  // 初回ログインのパスワード変更を済ませる
+  await plain.call('/api/me/password', { method: 'POST', body: { currentPassword: 'plain-password-12', newPassword: 'plain-password-34' } });
+  await plain.login('plain', 'plain-password-34');
+
+  assert.strictEqual((await plain.call('/api/groups')).status, 403);
+  assert.strictEqual((await plain.call('/api/groups', { method: 'POST', body: { name: '勝手に' } })).status, 403);
+
+  const made = await admin.call('/api/groups', { method: 'POST', body: { name: '運用' } });
+  assert.strictEqual(made.status, 200, made.text);
+  const groupId = made.json.group.id;
+  assert.strictEqual((await plain.call(`/api/groups/${groupId}/members`, { method: 'POST', body: { userId: 'x' } })).status, 403);
+  assert.strictEqual((await plain.call(`/api/groups/${groupId}`, { method: 'DELETE' })).status, 403);
+});
+
+test('グループ: Vault の共有画面では、グループの中の人は見えない（名前と人数だけ）', async () => {
+  const admin = client();
+  await admin.login('admin', 'admin-password-123');
+  const vault = await admin.call('/api/vaults', { method: 'POST', body: { name: 'グループ共有' } });
+  const vaultId = vault.json.vault.id;
+  const { json } = await admin.call(`/api/vaults/${vaultId}/members`);
+  assert.ok(Array.isArray(json.groupCandidates));
+  for (const g of json.groupCandidates) assert.deepStrictEqual(Object.keys(g).sort(), ['id', 'memberCount', 'name']);
+});
+
+test('グループ: Vault の共有先の変更は owner だけ。owner は付けられず、owner にだけ中の人が見える', async () => {
+  const admin = client();
+  await admin.login('admin', 'admin-password-123');
+  const made = await admin.call('/api/users', { method: 'POST', body: { username: 'gviewer', password: 'gviewer-password-12', role: 'member' } });
+  const viewerId = made.json.user.id;
+  const viewer = client({ ip: '10.0.0.22' });
+  await viewer.login('gviewer', 'gviewer-password-12');
+  await viewer.call('/api/me/password', { method: 'POST', body: { currentPassword: 'gviewer-password-12', newPassword: 'gviewer-password-34' } });
+  await viewer.login('gviewer', 'gviewer-password-34');
+
+  // 管理者は自分をグループに入れられないので、別の利用者（gviewer）を入れる
+  const group = (await admin.call('/api/groups', { method: 'POST', body: { name: '閲覧係' } })).json.group;
+  assert.strictEqual((await admin.call(`/api/groups/${group.id}/members`, { method: 'POST', body: { userId: viewerId } })).status, 200);
+  const vaultId = (await admin.call('/api/vaults', { method: 'POST', body: { name: '閲覧係の金庫' } })).json.vault.id;
+
+  const asOwner = await admin.call(`/api/vaults/${vaultId}/groups`, { method: 'POST', body: { groupId: group.id, role: 'owner' } });
+  assert.strictEqual(asOwner.status, 400);
+  assert.match(asOwner.json.error, /owner を付けられません/);
+  assert.strictEqual((await admin.call(`/api/vaults/${vaultId}/groups`, { method: 'POST', body: { groupId: 'no-such-group', role: 'viewer' } })).status, 400);
+  assert.strictEqual((await admin.call(`/api/vaults/${vaultId}/groups`, { method: 'POST', body: { groupId: group.id, role: 'viewer' } })).status, 200);
+
+  // グループ経由の viewer は、共有先を変えられない
+  assert.strictEqual((await viewer.call(`/api/vaults/${vaultId}/groups/${group.id}`, { method: 'PUT', body: { role: 'editor' } })).status, 403);
+  assert.strictEqual((await viewer.call(`/api/vaults/${vaultId}/groups/${group.id}`, { method: 'DELETE' })).status, 403);
+
+  // owner には中の人が見え、viewer には人数だけ
+  const ownerView = (await admin.call(`/api/vaults/${vaultId}/members`)).json;
+  assert.deepStrictEqual(ownerView.groups[0].members.map((m) => m.username), ['gviewer']);
+  const viewerView = (await viewer.call(`/api/vaults/${vaultId}/members`)).json;
+  assert.strictEqual(viewerView.groups[0].memberCount, 1);
+  assert.ok(!('members' in viewerView.groups[0]));
+  assert.deepStrictEqual(viewerView.groupCandidates, []);
+});

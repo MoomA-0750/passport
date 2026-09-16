@@ -11,6 +11,7 @@
 <div class="container-xl py-4">
   <ul class="nav nav-tabs mb-3" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-users" type="button">ユーザー</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-groups" type="button">グループ</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">監査ログ</button></li>
   </ul>
 
@@ -34,6 +35,19 @@
       <p class="text-muted small">
         追加したユーザーには、初期パスワードを口頭など別の経路で伝えてください。
         初回ログイン時に本人がパスワードを変えるまで、ほかの操作はできません。
+      </p>
+    </div>
+
+    <div class="tab-pane fade" id="tab-groups">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h5 mb-0">グループ</h1>
+        <button class="btn btn-sm btn-primary" type="button" data-action="new-group">＋ グループを作る</button>
+      </div>
+      <div id="groups-list"></div>
+      <p class="text-muted small mt-3">
+        Vault の owner は、ここで作ったグループを自分の Vault の共有先に足せます。
+        グループから人を外すと、そのグループ経由で入っていた Vault には、その場で入れなくなります。
+        共有先として使われているグループは消せません。
       </p>
     </div>
 
@@ -101,6 +115,34 @@
       <div class="modal-footer">
         <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">キャンセル</button>
         <button class="btn btn-primary" type="submit">追加</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- グループ作成・名前変更 -->
+<div class="modal fade" id="group-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <form class="modal-content" id="group-form" autocomplete="off">
+      <div class="modal-header">
+        <h5 class="modal-title" id="group-modal-title">グループを作る</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="group-id">
+        <div class="mb-3">
+          <label class="form-label" for="group-name">名前 <span class="text-danger">*</span></label>
+          <input class="form-control" id="group-name" required maxlength="64">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="group-description">説明</label>
+          <input class="form-control" id="group-description" maxlength="512">
+        </div>
+        <div class="alert alert-danger d-none" id="group-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">キャンセル</button>
+        <button class="btn btn-primary" type="submit">保存</button>
       </div>
     </form>
   </div>

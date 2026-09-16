@@ -261,9 +261,35 @@
           </div>
         </div>
 
+        <h6 class="mt-4">グループ</h6>
+        <table class="table table-sm align-middle">
+          <tbody id="member-groups-tbody"></tbody>
+        </table>
+        <div id="member-groups-add-area" class="d-none">
+          <div class="row g-2 align-items-end">
+            <div class="col-sm-6">
+              <label class="form-label" for="member-group">追加するグループ</label>
+              <select class="form-select" id="member-group"></select>
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label" for="member-group-role">権限</label>
+              <select class="form-select" id="member-group-role">
+                <option value="viewer">viewer（見るだけ）</option>
+                <option value="editor">editor（追加・編集できる）</option>
+              </select>
+            </div>
+            <div class="col-sm-2">
+              <button class="btn btn-primary w-100" type="button" data-action="add-member-group">追加</button>
+            </div>
+          </div>
+        </div>
+        <p class="text-muted small mb-0" id="my-role-sources"></p>
+
         <div class="alert alert-info small mt-3 mb-0">
           Vault に入れた人は、その Vault のパスワードを復号して見られます。
           誰がいつ何を見たかは監査ログに残ります。
+          グループで入れた場合は、あとからグループに入った人も見られるようになります（グループの中身は管理者が決めます）。
+          グループに付けられるのは viewer と editor だけで、owner は人にだけ付けられます。
         </div>
         <div class="alert alert-danger d-none mt-3" id="members-error"></div>
       </div>
