@@ -8,6 +8,8 @@
 //   passport ls <Vault>
 //   passport read "<Vault>/<アイテム>[/<フィールド>]"     … フィールドの既定は password
 //   passport totp "<Vault>/<アイテム>"
+//   eval "$(passport ssh-agent [--lifetime 8h])"          … SSH エージェント（鍵を手元に持ってきて署名する）
+//   eval "$(passport ssh-agent -k)"                       … 止める
 //
 // 名前は ID でも指定できる。名前に / を含むときは --vault / --item / --field で渡す。
 //
@@ -26,6 +28,8 @@ const http = require('http');
 const https = require('https');
 
 const EXIT = { ok: 0, error: 1, usage: 2, auth: 3 };
+// SSH エージェントとして鍵を取り出すときは、サーバーの監査ログで read と見分けられるように名乗る
+let AGENT_CLIENT = false;
 const SECRET_FIELDS = /^(password|totp|note|privateKey|passphrase|custom:[A-Za-z0-9_-]{1,64})$/;
 
 class CliError extends Error {
@@ -44,6 +48,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === '-h' || arg === '--help') {
       options.help = true;
+    } else if (arg === '-k') {
+      options.kill = true;
     } else if (arg.startsWith('--')) {
       const eq = arg.indexOf('=');
       if (eq > 0) {
@@ -137,7 +143,7 @@ function request(target, method, pathname, { body, bearer, headers = {} } = {}) 
     headers: {
       Accept: 'application/json',
       'User-Agent': `passport-cli node/${process.versions.node}`,
-      'X-Passport-Client': 'cli',
+      'X-Passport-Client': AGENT_CLIENT ? 'cli-agent' : 'cli',
       ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
       // ログインと書き込みは Origin を確かめられる（CSRF 対策）。接続先そのものを名乗る
       Origin: target.url,
@@ -295,6 +301,241 @@ function writeValue(value) {
   process.stdout.write(process.stdout.isTTY ? `${value}\n` : String(value));
 }
 
+
+// --- SSH エージェント -----------------------------------------------------------
+//
+// 本人の決定: 鍵を端末に持ってくる。起動時に、読める SSH 鍵を Passport から取り出してメモリに持ち、
+// 署名は手元で行う。取り出しは鍵ごとに監査ログに残るが、個々の署名は残らない。
+// 寿命（既定 8 時間、最長 24 時間）が来たら鍵を捨てて終わる。
+
+const MAX_AGENT_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+function parseLifetime(text) {
+  if (text === undefined || text === true) return 8 * 60 * 60 * 1000;
+  const match = /^(\d+)\s*(s|m|h|d)?$/.exec(String(text).trim());
+  if (!match) throw new CliError('--lifetime は 30m / 8h / 1d のように指定してください', EXIT.usage);
+  const unit = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000 }[match[2] || 'h'];
+  const ms = Number(match[1]) * unit;
+  if (ms < 1000) throw new CliError('--lifetime が短すぎます', EXIT.usage);
+  if (ms > MAX_AGENT_LIFETIME_MS) throw new CliError('--lifetime は最長 24 時間です', EXIT.usage);
+  return ms;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function evalLines(socketPath, pid) {
+  return `SSH_AUTH_SOCK=${shellQuote(socketPath)}; export SSH_AUTH_SOCK;\nSSH_AGENT_PID=${pid}; export SSH_AGENT_PID;\n`;
+}
+
+// 読める Vault から SSH 鍵を集める。取り出しはサーバーの監査ログに鍵ごとに残る。
+// --vault を渡すと、その Vault の鍵だけを持ってくる（取り出す本数がそのまま端末への露出範囲になるため）
+async function collectSshKeys(ctx, log, { vaultNames = [] } = {}) {
+  const sshagent = require(path.join(__dirname, '..', 'lib', 'sshagent'));
+  const loaded = [];
+  const skipped = [];
+  const { vaults: all } = await api(ctx, 'GET', '/api/automation/vaults');
+  const vaults = vaultNames.length ? vaultNames.map((name) => pickOne(all, name, 'Vault', (v) => v.name)) : all;
+  for (const vault of vaults) {
+    const { items } = await api(ctx, 'GET', `/api/automation/vaults/${encodeURIComponent(vault.id)}/items`);
+    for (const item of items.filter((i) => i.type === 'sshkey' && i.fields.includes('privateKey'))) {
+      const label = `${vault.name}/${item.title}`;
+      const read = async (field) => (await api(ctx, 'POST',
+        `/api/automation/vaults/${encodeURIComponent(vault.id)}/items/${encodeURIComponent(item.id)}/read`, { field })).value;
+      try {
+        const privateKey = await read('privateKey');
+        const passphrase = item.fields.includes('passphrase') ? await read('passphrase') : null;
+        const entry = sshagent.loadPrivateKey(privateKey, { passphrase, comment: label });
+        const same = loaded.find((k) => k.publicBlob.equals(entry.publicBlob));
+        if (same) {
+          log(`  - ${label}: ${same.comment} と同じ鍵なので1本にまとめました`);
+          continue;
+        }
+        loaded.push(entry);
+        log(`  ✓ ${label}  ${entry.fingerprint}`);
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        skipped.push({ label, reason: err.message });
+        log(`  ✗ ${label}: ${err.message}`);
+      }
+    }
+  }
+  return { loaded, skipped, sshagent };
+}
+
+// ソケットの置き場所を、鍵を取り出す前に決めて確かめる（失敗する起動で鍵を取り出さないため）
+function decideSocket(options) {
+  if (options.socket !== undefined) {
+    if (options.socket === true || !String(options.socket).trim()) throw new CliError('--socket にパスを指定してください', EXIT.usage);
+    // 絶対パスにする。数字だけの値が TCP のポートと解釈されるのを防ぎ、cd しても壊れない SSH_AUTH_SOCK にする
+    const socketPath = path.resolve(String(options.socket));
+    if (fs.existsSync(socketPath)) throw new CliError(`${socketPath} はすでにあります`, EXIT.usage);
+    if (Buffer.byteLength(socketPath) > 100) throw new CliError(`ソケットのパスが長すぎます: ${socketPath}`, EXIT.usage);
+    return { socketPath, dir: null };
+  }
+  const base = Buffer.byteLength(os.tmpdir()) > 60 ? '/tmp' : os.tmpdir();
+  const dir = fs.mkdtempSync(path.join(base, 'passport-agent-'));
+  fs.chmodSync(dir, 0o700);
+  return { socketPath: path.join(dir, 'agent.sock'), dir };
+}
+
+function vaultOption(options) {
+  if (options.vault === undefined) return [];
+  if (options.vault === true) throw new CliError('--vault に Vault の名前か ID を指定してください', EXIT.usage);
+  return String(options.vault).split(',').map((v) => v.trim()).filter(Boolean);
+}
+
+// バックグラウンド起動の子は、自動化トークンを環境変数ではなく標準入力で受け取る。
+// 環境変数のままだと、寿命いっぱい /proc/<pid>/environ から同じユーザーに読めてしまうため
+function readTokenFromStdin() {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c) => { data += c; });
+    process.stdin.on('end', () => resolve(data.trim()));
+    process.stdin.on('error', reject);
+  });
+}
+
+async function runAgent(options) {
+  const ready = !!options['ready-pipe']; // 親（バックグラウンド起動）に準備できたことを知らせる
+  const lifetime = parseLifetime(options.lifetime);
+  const vaultNames = vaultOption(options);
+  let quiet = false;
+  const log = (line) => {
+    if (!quiet) process.stderr.write(`${line}\n`);
+  };
+  for (const stream of [process.stdout, process.stderr]) stream.on('error', () => { quiet = true; });
+
+  if (options['token-stdin']) {
+    const token = await readTokenFromStdin();
+    if (token) process.env.PASSPORT_TOKEN = token; // このプロセスの中だけ。/proc の初期環境には載らない
+  }
+  const ctx = loadCredential(options);
+  AGENT_CLIENT = true;
+  const { socketPath, dir } = decideSocket(options);
+  const cleanupDir = () => {
+    if (dir) {
+      try { fs.rmdirSync(dir); } catch { /* 消えている */ }
+    }
+  };
+
+  let loaded;
+  let skipped;
+  let sshagent;
+  try {
+    log('Passport から SSH 鍵を取り出しています（取り出しは監査ログに残ります）');
+    ({ loaded, skipped, sshagent } = await collectSshKeys(ctx, log, { vaultNames }));
+    if (loaded.length === 0) {
+      throw new CliError(`使える SSH 鍵がありませんでした${skipped.length ? `（読み飛ばし ${skipped.length} 本）` : ''}`);
+    }
+  } catch (err) {
+    cleanupDir();
+    throw err;
+  }
+
+  let keys = loaded;
+  let server;
+  try {
+    server = await sshagent.listen(socketPath, { list: () => keys, onSign: () => {} });
+  } catch (err) {
+    cleanupDir();
+    throw new CliError(`ソケットを開けません: ${err.message}`);
+  }
+
+  let finished = false;
+  const finish = (reason, code = 0) => {
+    if (finished) return;
+    finished = true;
+    keys = []; // 鍵を捨てる（KeyObject そのものは GC に任せる）
+    loaded.length = 0;
+    try { server.close(); } catch { /* 閉じている */ }
+    try { fs.unlinkSync(socketPath); } catch { /* 消えている */ }
+    cleanupDir();
+    log(`SSH エージェントを終了しました（${reason}）`);
+    process.exit(code);
+  };
+  setTimeout(() => finish('寿命'), lifetime);
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => finish(signal));
+  // 想定外の失敗でも、ソケットとディレクトリを残さない
+  server.on('error', (err) => finish(`ソケットのエラー: ${err.message}`, 1));
+  process.on('uncaughtException', (err) => finish(`想定外のエラー: ${err.message}`, 1));
+
+  const until = new Date(Date.now() + lifetime);
+  const sameDay = until.toDateString() === new Date().toDateString();
+  const hhmm = `${sameDay ? '' : '翌日の'}${String(until.getHours()).padStart(2, '0')}:${String(until.getMinutes()).padStart(2, '0')}`;
+  const summary = `鍵 ${keys.length} 本を読み込みました${skipped.length ? `（読み飛ばし ${skipped.length} 本）` : ''}。`
+    + `${hhmm} に鍵を捨てて終わります`;
+  if (ready) {
+    process.stdout.write(`${JSON.stringify({ socket: socketPath, pid: process.pid, summary })}\n`);
+    process.stdout.end();
+    quiet = true; // 親は終わるので、これ以降は書かない
+  } else {
+    process.stdout.write(evalLines(socketPath, process.pid));
+    log(summary);
+  }
+}
+
+async function startAgentInBackground(options) {
+  const { spawn } = require('child_process');
+  const args = [__filename, 'ssh-agent', '--foreground', '--ready-pipe'];
+  for (const name of ['lifetime', 'socket', 'url', 'ca', 'allow-http', 'vault']) {
+    if (options[name] === true) args.push(`--${name}`);
+    else if (options[name] !== undefined) args.push(`--${name}`, String(options[name]));
+  }
+  // ソケットのパスは親で絶対パスにしてから渡す（子の作業ディレクトリに依らないように）
+  if (options.socket !== undefined && options.socket !== true) {
+    args[args.indexOf('--socket') + 1] = path.resolve(String(options.socket));
+  }
+  const env = { ...process.env };
+  const token = env.PASSPORT_TOKEN;
+  delete env.PASSPORT_TOKEN;
+  if (token) args.push('--token-stdin');
+  const child = spawn(process.execPath, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env });
+  child.stdin.end(token ? `${token}\n` : '');
+  let out = '';
+  child.stderr.on('data', (d) => process.stderr.write(d));
+  child.stdout.on('data', (d) => { out += d; });
+  await new Promise((resolve, reject) => {
+    child.stdout.on('end', () => {
+      const line = out.split('\n').find((l) => l.startsWith('{'));
+      if (!line) return;
+      let info;
+      try {
+        info = JSON.parse(line);
+      } catch {
+        try { process.kill(child.pid, 'SIGTERM'); } catch { /* 終わっている */ }
+        reject(new CliError('SSH エージェントの起動を確かめられませんでした'));
+        return;
+      }
+      process.stdout.write(evalLines(info.socket, info.pid));
+      process.stdout.write(`echo ${shellQuote(`Passport SSH エージェント（pid ${info.pid}）`)} >&2;\n`);
+      process.stderr.write(`${info.summary}\n`);
+      child.stderr.destroy();
+      child.unref();
+      resolve();
+    });
+    child.on('exit', (code) => reject(new CliError('SSH エージェントを起動できませんでした', code || EXIT.error)));
+  });
+}
+
+function killAgent() {
+  const pid = Number(process.env.SSH_AGENT_PID);
+  if (!Number.isInteger(pid) || pid <= 1) throw new CliError('SSH_AGENT_PID が設定されていません', EXIT.usage);
+  // 別のプログラム（本物の ssh-agent など）を誤って止めないよう、Passport のエージェントかを確かめる（Linux の /proc を使う）
+  let argv;
+  try {
+    argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  } catch {
+    throw new CliError(`pid ${pid} のプロセスが見つかりません（-k は Linux の /proc で確かめます）`);
+  }
+  const isAgent = argv.length >= 3 && path.basename(argv[1]) === 'passport' && argv[2] === 'ssh-agent' && argv.includes('--foreground');
+  if (!isAgent) throw new CliError(`pid ${pid} は Passport の SSH エージェントではありません`);
+  process.kill(pid, 'SIGTERM');
+  process.stdout.write(`unset SSH_AUTH_SOCK;\nunset SSH_AGENT_PID;\necho ${shellQuote(`Passport SSH エージェント（pid ${pid}）を止めました`)} >&2;\n`);
+}
+
 // --- コマンド -----------------------------------------------------------------
 
 const commands = {
@@ -375,6 +616,18 @@ const commands = {
     writeValue(value);
   },
 
+  async 'ssh-agent'(args, options) {
+    if (options.kill) {
+      killAgent();
+      return;
+    }
+    if (options.foreground) {
+      await runAgent(options);
+      return;
+    }
+    await startAgentInBackground(options);
+  },
+
   async totp(args, options) {
     const ctx = loadCredential(options);
     const { vault, item } = await resolveItem(ctx, args[0], options, { withField: false });
@@ -392,6 +645,10 @@ const HELP = `使い方:
   passport ls <Vault>                                       アイテムの一覧（ID・種別・タイトル・ユーザー名・フィールド）
   passport read "<Vault>/<アイテム>[/<フィールド>]"         秘密を1つ出す（既定は password）
   passport totp "<Vault>/<アイテム>"                        ワンタイムパスワードを出す
+  eval "$(passport ssh-agent [--lifetime 8h])"              SSH エージェントを起動（読める SSH 鍵を手元に持ってくる）
+  eval "$(passport ssh-agent -k)"                           SSH エージェントを止める
+      --foreground で手前で動かす。--lifetime は最長 24h（過ぎたら鍵を捨てて終わる）
+      --vault で持ってくる Vault を絞る（カンマ区切り）。--socket でソケットの場所を決める
 
   名前に / を含むときは --vault / --item / --field で渡す。名前の代わりに ID も使える。
   自動化では PASSPORT_TOKEN に自動化トークンを入れる（ファイルには保存しない）。

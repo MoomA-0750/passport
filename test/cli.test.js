@@ -475,3 +475,144 @@ test('CLI: 手元以外への http:// は --allow-http なしでは接続しな�
   assert.strictEqual(r.code, 2);
   assert.match(r.err, /平文/);
 });
+
+// --- SSH エージェント（passport ssh-agent） -----------------------------------------
+
+const hasSshAdd = spawnSync('ssh-add', ['-h'], { encoding: 'utf8' }).error === undefined
+  && spawnSync('ssh-keygen', ['-V'], { encoding: 'utf8' }).error === undefined;
+let agentToken;
+let agentKeyFingerprint;
+
+function asyncCli(args, { token, env = {} } = {}) {
+  return new Promise((resolve) => {
+    const e = { ...process.env, HOME, XDG_CONFIG_HOME: path.join(HOME, '.config'), PASSPORT_URL: BASE, PASSPORT_TOKEN: token, ...env };
+    const child = spawn(process.execPath, [path.join(REPO, 'bin', 'passport'), ...args], { env: e });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('close', (code) => resolve({ code, out, err }));
+  });
+}
+
+function runAsync(cmd, args, env) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { env });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', (code) => resolve({ code, out }));
+  });
+}
+
+test('ssh-agent: 準備（鍵を2本預け、片方はパスフレーズ付きの OpenSSH 形式）', { skip: !hasSshAdd }, async () => {
+  const keyDir = fs.mkdtempSync(path.join(TMP, 'keys-'));
+  spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'deploy', '-f', path.join(keyDir, 'plain')]);
+  spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', 'pass-phrase-1', '-C', 'locked', '-f', path.join(keyDir, 'locked')]);
+  agentKeyFingerprint = spawnSync('ssh-keygen', ['-l', '-E', 'sha256', '-f', path.join(keyDir, 'plain.pub')], { encoding: 'utf8' }).stdout.split(' ')[1];
+  for (const [title, file, passphrase] of [['デプロイ鍵', 'plain', null], ['鍵付き', 'locked', 'pass-phrase-1']]) {
+    const secrets = { privateKey: fs.readFileSync(path.join(keyDir, file), 'utf8') };
+    if (passphrase) secrets.passphrase = passphrase;
+    const r = await ownerBrowser.call(`/api/vaults/${seed.ops}/items`, { method: 'POST', body: { type: 'sshkey', title, secrets } });
+    assert.strictEqual(r.status, 200, r.text);
+  }
+  const t = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'SSH エージェント', vaultIds: [seed.ops], expiresInDays: 1 } });
+  agentToken = t.json.token;
+});
+
+test('ssh-agent: バックグラウンドで起動し、eval 用の出力を返す。ssh-add -l に鍵が出て、読めない鍵は理由つきで飛ばす', { skip: !hasSshAdd }, async () => {
+  const r = await asyncCli(['ssh-agent', '--lifetime', '10m'], { token: agentToken });
+  assert.strictEqual(r.code, 0, r.err);
+  const sock = /SSH_AUTH_SOCK='([^']+)'/.exec(r.out)[1];
+  const pid = Number(/SSH_AGENT_PID=(\d+)/.exec(r.out)[1]);
+  assert.match(r.err, /暗号化された OpenSSH/);
+  assert.strictEqual(fs.statSync(sock).mode & 0o777, 0o600);
+  assert.strictEqual(fs.statSync(path.dirname(sock)).mode & 0o777, 0o700);
+
+  const env = { ...process.env, SSH_AUTH_SOCK: sock };
+  const listed = await runAsync('ssh-add', ['-l'], env);
+  assert.strictEqual(listed.code, 0);
+  assert.ok(listed.out.includes(agentKeyFingerprint), listed.out);
+  assert.ok(listed.out.includes('運用/デプロイ鍵'));
+  assert.strictEqual(listed.out.trim().split('\n').length, 1);
+
+  // 取り出しは鍵ごとに監査ログに残る
+  assert.ok(auditEntries().some((e) => e.event === 'item.automation_read' && e.field === 'privateKey'));
+
+  // トークンは子プロセスの初期環境に載っていない（/proc/<pid>/environ から読めない）
+  if (fs.existsSync(`/proc/${pid}/environ`)) {
+    const environ = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+    assert.ok(!environ.includes(agentToken), 'トークンがエージェントの環境変数に残っている');
+    assert.ok(!environ.includes('PASSPORT_TOKEN='));
+    assert.ok(!fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes(agentToken));
+  }
+  // 監査ログで、read と見分けられる
+  assert.ok(auditEntries().some((e) => e.event === 'item.automation_read' && /SSH エージェント/.test(e.note || '')));
+
+  // -k で止めると、ソケットが消える
+  const killed = await asyncCli(['ssh-agent', '-k'], { env: { SSH_AGENT_PID: String(pid) } });
+  assert.strictEqual(killed.code, 0, killed.err);
+  assert.match(killed.out, /unset SSH_AUTH_SOCK/);
+  for (let i = 0; i < 30 && fs.existsSync(sock); i += 1) await sleep(100);
+  assert.ok(!fs.existsSync(sock), 'ソケットが残っている');
+});
+
+test('ssh-agent: 寿命が来たら鍵を捨てて終わり、ソケットも消える', { skip: !hasSshAdd }, async () => {
+  const child = spawn(process.execPath, [path.join(REPO, 'bin', 'passport'), 'ssh-agent', '--foreground', '--lifetime', '2s'], {
+    env: { ...process.env, HOME, PASSPORT_URL: BASE, PASSPORT_TOKEN: agentToken }
+  });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', () => {});
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  for (let i = 0; i < 50 && !/SSH_AUTH_SOCK/.test(out); i += 1) await sleep(100);
+  const sock = /SSH_AUTH_SOCK='([^']+)'/.exec(out)[1];
+  assert.ok(fs.existsSync(sock));
+  assert.strictEqual(await exited, 0);
+  assert.ok(!fs.existsSync(sock));
+});
+
+test('ssh-agent: -k は Passport のエージェント以外を止めない', () => {
+  const r = cli(['ssh-agent', '-k'], { env: { SSH_AGENT_PID: String(process.pid) } });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.err, /Passport の SSH エージェントではありません/);
+});
+
+test('ssh-agent: 寿命は最長 24 時間', () => {
+  const r = cli(['ssh-agent', '--foreground', '--lifetime', '2d'], { token: agentToken, env: { PASSPORT_URL: BASE } });
+  assert.strictEqual(r.code, 2);
+  assert.match(r.err, /最長 24 時間/);
+});
+
+test('ssh-agent: 起動に失敗したら eval 用の出力を出さず、ソケットのディレクトリも残さない', { skip: !hasSshAdd }, async () => {
+  const before = fs.readdirSync('/tmp').filter((n) => n.startsWith('passport-agent-')).length;
+  const r = await asyncCli(['ssh-agent'], { token: 'pp_000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+  assert.notStrictEqual(r.code, 0);
+  assert.strictEqual(r.out, '');
+  const after = fs.readdirSync('/tmp').filter((n) => n.startsWith('passport-agent-')).length;
+  assert.strictEqual(after, before, 'ソケットのディレクトリが残った');
+});
+
+test('ssh-agent: --vault で絞ると、ほかの Vault の鍵は取り出さない', { skip: !hasSshAdd }, async () => {
+  const before = auditEntries().filter((e) => e.event === 'item.automation_read' && e.field === 'privateKey').length;
+  const withToken = await asyncCli(['ssh-agent', '--foreground', '--lifetime', '1s', '--vault', '存在しない'], { token: agentToken });
+  assert.notStrictEqual(withToken.code, 0);
+  assert.match(withToken.err, /見つかりません/);
+  const after = auditEntries().filter((e) => e.event === 'item.automation_read' && e.field === 'privateKey').length;
+  assert.strictEqual(after, before, '絞り込みに失敗したのに鍵を取り出した');
+});
+
+test('ssh-agent: --socket に数字だけを渡すと、今のディレクトリのソケットになる（TCP にならない）', { skip: !hasSshAdd }, async () => {
+  const workdir = fs.mkdtempSync(path.join('/tmp', 'ppsock-'));
+  const child = spawn(process.execPath, [path.join(REPO, 'bin', 'passport'), 'ssh-agent', '--foreground', '--lifetime', '2s', '--socket', '8932'], {
+    cwd: workdir, env: { ...process.env, HOME, PASSPORT_URL: BASE, PASSPORT_TOKEN: agentToken }
+  });
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', () => {});
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  for (let i = 0; i < 50 && !/SSH_AUTH_SOCK/.test(out); i += 1) await sleep(100);
+  assert.match(out, new RegExp(`SSH_AUTH_SOCK='${workdir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/8932'`));
+  assert.ok(fs.statSync(path.join(workdir, '8932')).isSocket());
+  await exited;
+  fs.rmSync(workdir, { recursive: true, force: true });
+});
