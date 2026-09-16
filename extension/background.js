@@ -14,13 +14,23 @@ const PENDING_TTL_MS = 2 * 60 * 1000;
 
 // --- content script の登録 ---------------------------------------------------
 
-// Passport 自身の画面にはメニューを出さない（金庫の画面で金庫のメニューが出ても邪魔なだけ）
+// Passport 自身の画面にはメニューを出さない。
+//
+// 金庫の画面で金庫のメニューが出ても邪魔なだけ、というだけの話ではない。
+// ここに content script が載ると、金庫のログイン画面で入力された
+// **マスターパスワード**を「保存しますか」の預かりとして拾ってしまう。
+//
+// 以前は matches から文字列の完全一致で外していたが、「すべてのサイト」を許可すると
+// granted.origins は <all_urls> になり、サーバーの origin とは一致しないので素通りしていた。
+// excludeMatches で外す（こちらは matches が何であっても効く）。
 async function serverOriginPattern() {
   const { serverUrl } = await getSettings();
   if (!serverUrl) return null;
   try {
     const url = new URL(serverUrl);
-    return `${url.protocol}//${url.host}/*`;
+    // match pattern のホスト部にポートは書けないので、ポートは落とす。
+    // 同じホストの別ポートまで除外することになるが、金庫のホストなら外して困らない。
+    return `${url.protocol}//${url.hostname}/*`;
   } catch {
     return null;
   }
@@ -31,20 +41,22 @@ async function serverOriginPattern() {
 async function syncInlineScripts() {
   const granted = await chrome.permissions.getAll();
   const serverPattern = await serverOriginPattern();
-  const matches = (granted.origins || []).filter((pattern) => pattern !== serverPattern);
+  const matches = granted.origins || [];
+  const excludeMatches = serverPattern ? [serverPattern] : [];
 
   const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [INLINE_SCRIPT_ID] })
     .catch(() => []);
 
   if (matches.length === 0) {
     if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [INLINE_SCRIPT_ID] });
-    return { registered: false, matches };
+    return { registered: false, matches, excludeMatches };
   }
 
   const definition = {
     id: INLINE_SCRIPT_ID,
     js: ['content.js'],
     matches,
+    excludeMatches,
     runAt: 'document_idle',
     // ログインフォームが iframe の中にあることは珍しくない。
     // どのサイトの候補を出すかは各フレーム自身の origin で決まるので、入れても広がらない。
@@ -55,9 +67,16 @@ async function syncInlineScripts() {
   if (existing.length) {
     await chrome.scripting.updateContentScripts([definition]);
   } else {
-    await chrome.scripting.registerContentScripts([definition]);
+    try {
+      await chrome.scripting.registerContentScripts([definition]);
+    } catch (err) {
+      // 権限変更の通知とメッセージの2経路から同時に呼ばれると、
+      // 後発が「ID が重複している」で失敗する。その場合は更新に切り替える。
+      if (/duplicate/i.test(err.message)) await chrome.scripting.updateContentScripts([definition]);
+      else throw err;
+    }
   }
-  return { registered: true, matches };
+  return { registered: true, matches, excludeMatches };
 }
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -182,6 +201,17 @@ async function handleMessage(message, sender) {
   }
   const host = hostOfSender(sender);
   if (!host) return { error: 'このページでは使えません' };
+
+  // 登録側で除外しているが、取りこぼしても金庫の画面には答えない。
+  // 特に save:captured は、ここが最後の砦になる（マスターパスワードを預かってしまうため）。
+  const { serverUrl } = await getSettings();
+  if (serverUrl) {
+    try {
+      if (new URL(serverUrl).hostname === host) return { error: '金庫の画面では使いません' };
+    } catch {
+      // URL が壊れているときは判定しない
+    }
+  }
 
   try {
     if (message.type === 'inline:candidates') {

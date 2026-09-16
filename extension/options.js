@@ -55,38 +55,6 @@ inlineToggle.addEventListener('change', async () => {
     // service worker が寝ていても、permissions の変化で起きて同期される
   }
   await refreshInline();
-
-// --- ログインの保存を勧めるかどうか -------------------------------------------
-
-const saveOfferToggle = document.getElementById('save-offer');
-const ignoredWrap = document.getElementById('ignored-wrap');
-const ignoredList = document.getElementById('ignored-list');
-
-async function refreshSaveOffer() {
-  const settings = await getSettings();
-  saveOfferToggle.checked = settings.saveOffer !== false;
-
-  const hosts = settings.ignoredHosts || [];
-  ignoredWrap.hidden = hosts.length === 0;
-  ignoredList.textContent = '';
-  for (const host of hosts) {
-    const li = document.createElement('li');
-    li.textContent = host;
-    ignoredList.append(li);
-  }
-}
-
-saveOfferToggle.addEventListener('change', async () => {
-  await saveSettings({ saveOffer: saveOfferToggle.checked });
-  await refreshSaveOffer();
-});
-
-document.getElementById('clear-ignored').addEventListener('click', async () => {
-  await saveSettings({ ignoredHosts: [] });
-  await refreshSaveOffer();
-});
-
-refreshSaveOffer();
 });
 
 refreshInline();

@@ -188,6 +188,20 @@ async function fillItem(item) {
       }
     }
 
+    // 取り出している間にタブが別のサイトへ遷移しているかもしれない。
+    // 遷移先のフォームへパスワードを入れてしまわないよう、注入の直前に確かめ直す。
+    let currentTab;
+    try {
+      currentTab = await chrome.tabs.get(activeTab.id);
+    } catch {
+      status('タブが見つかりません', 'warn');
+      return;
+    }
+    if (hostOfUrl(currentTab.url) !== currentHost) {
+      status('ページが変わったので入力を取りやめました', 'warn');
+      return;
+    }
+
     const [injection] = await chrome.scripting.executeScript({
       target: { tabId: activeTab.id, allFrames: false },
       func: fillCredentials,

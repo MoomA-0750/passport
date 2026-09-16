@@ -8,7 +8,15 @@
 //   ・秘密はここに置かない。埋める瞬間に background から受け取り、欄へ入れたら忘れる
 //   ・どのサイトの候補を出すかは background が sender の origin から決める。
 //     ここから「このホストの分をくれ」と指定できないようにしてある（なりすまし防止）
-//   ・メニューは closed な Shadow DOM の中に作る。ページ側の CSS と JS から触らせない
+//   ・メニューは closed な Shadow DOM の中に作る。ただし closed が守るのは
+//     「中の要素を JS で掴むこと」だけで、ホスト要素自体はページの普通の div。
+//     ページの !important に負けて透明化・移動させられるので、次の3枚で守る:
+//       1. ホスト要素の危ない性質を、インラインの !important で毎回押さえ直す
+//          （インラインの !important は、ページの !important にも勝つ）
+//       2. メニューを開くのは、直前に本物の操作があったときだけ。
+//          ページが element.focus() を呼んで出る focusin は isTrusted=true なので、
+//          isTrusted だけでは「ページが勝手に開く」を止められない
+//       3. 埋める直前に、その座標が本当に自分の行で、目に見える形で出ているかを確かめる
 //   ・埋めるのは isTrusted な操作だけ。ページが script から click() を投げても動かない
 //   ・勝手に送信しない
 //   ・まだ登録の無いサイトでログインされたら「保存しますか」と聞く。
@@ -33,8 +41,11 @@
   let dismissedFor = null;    // このフィールドでは出さない、という一時的な記憶
   let busy = false;
   let lastCaptureKey = '';    // 同じ内容を何度も送らないための目印
+  let lastUserGestureAt = 0;  // 本物の操作が最後にあった時刻
 
   const CACHE_MS = 30 * 1000;
+  // 本物の操作からこの時間内に来たフォーカスだけを、利用者の意思とみなす
+  const USER_GESTURE_WINDOW_MS = 1000;
 
   // --- 入力欄の見分け -------------------------------------------------------
 
@@ -218,19 +229,99 @@
     }
   `;
 
+  // ページが #passport-inline-host に !important を当てて、
+  // 透明にしたり別の場所へ動かしたりできないように押さえる性質。
+  // インラインの !important は、ページの !important よりも強い。
+  const PINNED_STYLES = {
+    position: 'static',
+    opacity: '1',
+    transform: 'none',
+    scale: 'none',
+    rotate: 'none',
+    translate: 'none',
+    perspective: 'none',
+    filter: 'none',
+    'backdrop-filter': 'none',
+    'mix-blend-mode': 'normal',
+    visibility: 'visible',
+    display: 'block',
+    'pointer-events': 'auto',
+    'clip-path': 'none',
+    clip: 'auto',
+    mask: 'none',
+    contain: 'none',
+    'content-visibility': 'visible',
+    isolation: 'auto',
+    zoom: '1',
+    width: 'auto',
+    height: 'auto',
+    margin: '0',
+    padding: '0',
+    border: '0',
+    overflow: 'visible',
+    transition: 'none',
+    animation: 'none',
+    'will-change': 'auto'
+  };
+
+  function pinHostStyles() {
+    if (!hostElement) return;
+    for (const [property, value] of Object.entries(PINNED_STYLES)) {
+      hostElement.style.setProperty(property, value, 'important');
+    }
+  }
+
   function ensureShadow() {
-    if (shadow) return shadow;
-    hostElement = document.createElement('div');
-    hostElement.id = HOST_ELEMENT_ID;
-    // ページの CSS に巻き込まれないように、位置だけ持たせる
-    hostElement.style.cssText = 'all: initial; position: static;';
-    // closed にして、ページ側の JS から中身を触れないようにする
-    shadow = hostElement.attachShadow({ mode: 'closed' });
-    const style = document.createElement('style');
-    style.textContent = STYLE;
-    shadow.append(style);
+    // ページに消された場合は作り直す（消されたまま黙って動かなくならないように）
+    if (shadow && hostElement && hostElement.isConnected) {
+      pinHostStyles();
+      return shadow;
+    }
+    if (!shadow) {
+      hostElement = document.createElement('div');
+      hostElement.id = HOST_ELEMENT_ID;
+      // closed にして、ページ側の JS から中身を触れないようにする
+      shadow = hostElement.attachShadow({ mode: 'closed' });
+      const style = document.createElement('style');
+      style.textContent = STYLE;
+      shadow.append(style);
+    }
+    pinHostStyles();
     (document.body || document.documentElement).append(hostElement);
     return shadow;
+  }
+
+  // 3枚目: 埋める直前に「本当に見えている自分の行を押したのか」を確かめる。
+  // ページは祖先（body など）に opacity や filter を掛けることでも隠せるので、
+  // ホスト要素の性質を押さえるだけでは足りない。
+  function isPresentedHonestly(rowElement, event) {
+    if (!hostElement || !hostElement.isConnected || !rowElement) return false;
+
+    // その座標を実際に占めているのが自分か
+    if (document.elementFromPoint(event.clientX, event.clientY) !== hostElement) return false;
+
+    // 押された点が、その行の矩形の中にあるか
+    const rect = rowElement.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right
+      || event.clientY < rect.top || event.clientY > rect.bottom) return false;
+
+    // 潰されていないか（押せる大きさが残っているか）
+    if (rect.width < 24 || rect.height < 12) return false;
+
+    // 祖先まで遡って、目に見える形で出ているか
+    let node = hostElement;
+    let opacity = 1;
+    while (node && node.nodeType === 1) {
+      const style = window.getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.display === 'none') return false;
+      if (style.filter !== 'none') return false;
+      if (style.backdropFilter && style.backdropFilter !== 'none') return false;
+      if (style.mixBlendMode && style.mixBlendMode !== 'normal') return false;
+      const value = Number(style.opacity);
+      if (Number.isFinite(value)) opacity *= value;
+      node = node.parentElement;
+    }
+    return opacity >= 0.9;
   }
 
   function hideMenu() {
@@ -324,6 +415,11 @@
         row.addEventListener('click', (event) => {
           // ページが script から click() を投げてきても動かさない
           if (!event.isTrusted) return;
+          // 透明化・移動・縮小されたメニューを踏まされていないか確かめる
+          if (!isPresentedHonestly(row, event)) {
+            showNote('この画面では安全に入力できません。ツールバーのアイコンから操作してください', true);
+            return;
+          }
           void choose(item, field);
         });
         li.append(row);
@@ -565,6 +661,10 @@
     saveButton.textContent = offer.existingItemId ? '更新する' : '保存する';
     saveButton.addEventListener('click', (event) => {
       if (!event.isTrusted) return;
+      if (!isPresentedHonestly(saveButton, event)) {
+        showBarResult('この画面では安全に保存できません', true);
+        return;
+      }
       saveButton.disabled = true;
       void decide('save', {
         vaultId: vaultSelect ? vaultSelect.value : null,
@@ -607,7 +707,9 @@
     result.textContent = text;
     result.style.color = isError ? '#d6336c' : '';
     bar.append(result);
-    if (!isError) setTimeout(hideBar, 2500);
+    // 失敗したときも閉じられるようにする（閉じるボタンは head に残っている）。
+    // 何も操作されなければ、少し長めに置いてから自分で消える。
+    setTimeout(hideBar, isError ? 8000 : 2500);
   }
 
   async function decide(action, extra = {}) {
@@ -644,6 +746,11 @@
     if (!isLoginField(field)) return;
     if (dismissedFor === field) return;
 
+    // ページが element.focus() を呼んで発生する focusin も isTrusted は true になる。
+    // 「利用者が自分で入力欄へ移った」ことを確かめるには、直前に本物の操作
+    // （クリック・キー入力・タッチ）があったかを見るしかない。
+    if (Date.now() - lastUserGestureAt > USER_GESTURE_WINDOW_MS) return;
+
     // まず枠だけ出して、候補が来たら描き直す
     await loadCandidates();
     if (document.activeElement !== field) return; // 待っている間に離れていたら出さない
@@ -651,9 +758,25 @@
     renderMenu(field);
   }
 
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'touchstart']) {
+    document.addEventListener(type, (event) => {
+      if (event.isTrusted) lastUserGestureAt = Date.now();
+    }, true);
+  }
+
   document.addEventListener('focusin', (event) => {
     if (!event.isTrusted) return;
     void onFocus(event);
+  }, true);
+
+  // 既にフォーカスのある欄をもう一度押したときは focusin が出ない。
+  // 利用者から見れば「押したのに出ない」なので、クリックからも開けるようにする。
+  document.addEventListener('click', (event) => {
+    if (!event.isTrusted) return;
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement)) return;
+    if (anchorField === field && shadow && shadow.querySelector('.menu')) return; // もう出ている
+    void onFocus({ target: field });
   }, true);
 
   document.addEventListener('focusout', (event) => {
@@ -672,6 +795,7 @@
   }, true);
 
   document.addEventListener('keydown', (event) => {
+    if (!event.isTrusted) return; // ページが合成 Escape で黙らせるのを防ぐ
     if (event.key === 'Escape' && anchorField) {
       dismissedFor = anchorField;
       hideMenu();
