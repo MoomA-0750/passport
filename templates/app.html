@@ -13,6 +13,8 @@
       </button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><button class="dropdown-item" type="button" data-action="open-password-change">パスワードを変更</button></li>
+        <li><button class="dropdown-item" type="button" data-action="open-sessions">ログイン中の端末</button></li>
+        <li><button class="dropdown-item" type="button" data-action="open-activity">自分の履歴</button></li>
         <li><button class="dropdown-item" type="button" data-action="lock-now">画面をロック</button></li>
         <li id="nav-admin-item" class="d-none"><hr class="dropdown-divider"></li>
         <li id="nav-admin-link" class="d-none"><a class="dropdown-item" href="/admin">ユーザーと監査ログ</a></li>
@@ -385,6 +387,68 @@
         <button class="btn btn-primary" type="submit">変更する</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ログイン中の端末 -->
+<div class="modal fade" id="sessions-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">ログイン中の端末</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle small">
+            <thead>
+              <tr><th>種類</th><th>ログイン</th><th>最後の操作</th><th>接続元</th><th></th></tr>
+            </thead>
+            <tbody id="sessions-tbody"></tbody>
+          </table>
+        </div>
+        <p class="text-muted small mb-0">
+          心当たりのない端末があれば切ってから、パスワードを変えてください（変えると、ほかの端末はすべて切れます）。
+          サーバーを再起動すると、すべての端末のログインが切れます。
+        </p>
+        <div class="alert alert-danger d-none mt-3" id="sessions-error"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger" type="button" data-action="revoke-other-sessions">この端末以外をすべて切る</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自分の履歴 -->
+<div class="modal fade" id="activity-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">自分の履歴</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <div class="btn-group btn-group-sm mb-3" role="group" id="activity-filter">
+          <button class="btn btn-outline-secondary active" type="button" data-relation="">すべて</button>
+          <button class="btn btn-outline-secondary" type="button" data-relation="self">自分の操作</button>
+          <button class="btn btn-outline-secondary" type="button" data-relation="account">自分のアカウントへ</button>
+          <button class="btn btn-outline-secondary" type="button" data-relation="vault">自分が owner の Vault で</button>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle small">
+            <thead>
+              <tr><th style="width:9rem">時刻</th><th>できごと</th><th>誰が</th><th>どこで</th><th>備考</th></tr>
+            </thead>
+            <tbody id="activity-tbody"></tbody>
+          </table>
+        </div>
+        <p class="text-muted small mb-0">
+          直近3か月の、自分の操作・自分のアカウントに対して起きたこと・自分が owner の Vault でほかの人が行った操作です。
+          ほかの人の操作の接続元は表示しません（自分のアカウントへのログイン試行を除く）。
+        </p>
+      </div>
+    </div>
   </div>
 </div>
 

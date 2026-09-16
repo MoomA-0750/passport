@@ -303,3 +303,57 @@ test('グループ: Vault の共有先の変更は owner だけ。owner は付�
   assert.ok(!('members' in viewerView.groups[0]));
   assert.deepStrictEqual(viewerView.groupCandidates, []);
 });
+
+// --- ログイン中の端末 -----------------------------------------------------------
+
+test('端末: ほかの端末を切ると、その端末は 401 になる。セッション ID は一覧に出ない', async () => {
+  const pc = client({ ip: '10.0.1.1' });
+  const laptop = client({ ip: '10.0.1.2' });
+  await pc.login('admin', 'admin-password-123');
+  const laptopLogin = await laptop.login('admin', 'admin-password-123');
+  const laptopCookie = laptopLogin.headers.getSetCookie().map((c) => c.split(';')[0]).find((c) => c.startsWith('passport_session='));
+
+  const { json } = await pc.call('/api/me/sessions');
+  assert.ok(json.sessions.length >= 2);
+  assert.ok(!JSON.stringify(json).includes(laptopCookie.split('=')[1]), 'セッション ID が一覧に出ている');
+  const target = json.sessions.find((s) => !s.current && s.ip === '10.0.1.2');
+  assert.ok(target);
+
+  assert.strictEqual((await laptop.call('/api/vaults')).status, 200);
+  const revoked = await pc.call(`/api/me/sessions/${target.handle}`, { method: 'DELETE' });
+  assert.strictEqual(revoked.status, 200, revoked.text);
+  assert.strictEqual(revoked.json.loggedOut, false);
+  assert.strictEqual((await laptop.call('/api/vaults')).status, 401);
+  assert.strictEqual((await pc.call('/api/vaults')).status, 200);
+});
+
+test('端末: 他人の handle を指定しても切れない', async () => {
+  const admin = client({ ip: '10.0.1.3' });
+  await admin.login('admin', 'admin-password-123');
+  const other = client({ ip: '10.0.1.4' });
+  await other.login('plain', 'plain-password-34');
+  const otherHandle = (await other.call('/api/me/sessions')).json.sessions.find((s) => s.current).handle;
+
+  const attempt = await admin.call(`/api/me/sessions/${otherHandle}`, { method: 'DELETE' });
+  assert.strictEqual(attempt.status, 404);
+  assert.strictEqual((await other.call('/api/vaults')).status, 200);
+});
+
+test('端末: 今使っている端末を切るとログアウトになり、この端末以外をすべて切れる', async () => {
+  const a = client({ ip: '10.0.1.5' });
+  const b = client({ ip: '10.0.1.6' });
+  const c = client({ ip: '10.0.1.7' });
+  for (const x of [a, b, c]) await x.login('plain', 'plain-password-34');
+
+  const others = await a.call('/api/me/sessions/revoke-others', { method: 'POST' });
+  assert.strictEqual(others.status, 200);
+  assert.ok(others.json.removed >= 2);
+  assert.strictEqual((await b.call('/api/vaults')).status, 401);
+  assert.strictEqual((await c.call('/api/vaults')).status, 401);
+
+  const mine = (await a.call('/api/me/sessions')).json.sessions;
+  assert.strictEqual(mine.length, 1);
+  const self = await a.call(`/api/me/sessions/${mine[0].handle}`, { method: 'DELETE' });
+  assert.strictEqual(self.json.loggedOut, true);
+  assert.strictEqual((await a.call('/api/vaults')).status, 401);
+});

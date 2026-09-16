@@ -794,6 +794,69 @@ async function renderMembers() {
   }
 }
 
+// --- ログイン中の端末 / 自分の履歴 ------------------------------------------
+
+const SESSION_KIND_LABELS = { web: '🖥 画面', extension: '🧩 Chrome 拡張', cli: '⌨ CLI' };
+
+// User-Agent から、見分けるのに足りるだけの短い名前を作る（厳密でなくてよい）
+function describeUserAgent(ua) {
+  if (!ua) return '';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari' : /node|undici/i.test(ua) ? 'Node' : '';
+  const osName = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android'
+    : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+  return [browser, osName].filter(Boolean).join(' / ');
+}
+
+async function renderSessions() {
+  const { sessions } = await apiFetch('/api/me/sessions');
+  document.getElementById('sessions-tbody').innerHTML = sessions.map((s) => `
+    <tr data-handle="${escapeHtml(s.handle)}">
+      <td>
+        ${escapeHtml(SESSION_KIND_LABELS[s.kind] || s.kind)}
+        ${s.current ? '<span class="badge bg-success ms-1">この端末</span>' : ''}
+        <div class="text-muted" title="${escapeHtml(s.userAgent || '')}">${escapeHtml(describeUserAgent(s.userAgent))}</div>
+      </td>
+      <td class="text-nowrap">${escapeHtml(formatDateTime(s.createdAt))}</td>
+      <td class="text-nowrap">${escapeHtml(formatRelative(s.lastSeenAt) || formatDateTime(s.lastSeenAt))}</td>
+      <td class="font-monospace">${escapeHtml(s.lastIp || s.ip || '')}${s.ip && s.lastIp && s.ip !== s.lastIp
+        ? `<div class="text-muted">ログイン時 ${escapeHtml(s.ip)}</div>` : ''}</td>
+      <td class="text-end">
+        <button class="btn btn-sm btn-outline-danger" type="button" data-action="revoke-session">${s.current ? 'ログアウト' : '切る'}</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+let activityEntries = [];
+const RELATION_LABELS = { self: '自分', account: 'アカウント', vault: 'owner の Vault' };
+
+async function renderActivity() {
+  const { entries } = await apiFetch('/api/me/activity?limit=300');
+  activityEntries = entries;
+  drawActivity();
+}
+
+function drawActivity() {
+  const active = document.querySelector('#activity-filter .active');
+  const relation = active ? active.dataset.relation : '';
+  const rows = activityEntries.filter((e) => !relation || e.relation === relation);
+  document.getElementById('activity-tbody').innerHTML = rows.length ? rows.map((e) => `
+    <tr>
+      <td class="text-nowrap text-muted">${escapeHtml(formatDateTime(e.at))}</td>
+      <td>
+        ${escapeHtml(e.eventLabel)}
+        ${e.result && e.result !== 'ok' ? `<span class="badge bg-warning text-dark ms-1">${escapeHtml(e.result)}</span>` : ''}
+        ${e.field ? `<span class="badge bg-light text-dark ms-1">${escapeHtml(e.field)}</span>` : ''}
+        <span class="badge bg-light text-muted border ms-1">${escapeHtml(RELATION_LABELS[e.relation] || '')}</span>
+      </td>
+      <td>${escapeHtml(e.actorName || '—')}${e.ip ? `<div class="text-muted font-monospace">${escapeHtml(e.ip)}</div>` : ''}</td>
+      <td>${escapeHtml([e.vaultName, e.itemTitle].filter(Boolean).join(' / '))}</td>
+      <td>${escapeHtml(e.note || '')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">記録がありません</td></tr>';
+}
+
 // --- ゴミ箱 -----------------------------------------------------------------
 
 async function openTrash() {
@@ -1056,6 +1119,29 @@ function wire() {
         showError('pw-error', null);
         document.getElementById('password-form').reset();
         modal('password-modal').show();
+      } else if (action === 'open-sessions') {
+        showError('sessions-error', null);
+        modal('sessions-modal').show();
+        await renderSessions();
+      } else if (action === 'revoke-session') {
+        const row = button.closest('[data-handle]');
+        showError('sessions-error', null);
+        const result = await apiFetch(`/api/me/sessions/${encodeURIComponent(row.dataset.handle)}`, { method: 'DELETE' });
+        if (result.loggedOut) {
+          window.location.href = '/login';
+          return;
+        }
+        await renderSessions();
+        toast('切りました', 'success');
+      } else if (action === 'revoke-other-sessions') {
+        if (!window.confirm('この端末以外のログインをすべて切ります（Chrome 拡張も含みます）。よろしいですか？')) return;
+        showError('sessions-error', null);
+        const { removed } = await apiFetch('/api/me/sessions/revoke-others', { method: 'POST' });
+        await renderSessions();
+        toast(`${removed}件切りました`, 'success');
+      } else if (action === 'open-activity') {
+        modal('activity-modal').show();
+        await renderActivity();
       } else if (action === 'new-vault') {
         showError('vault-error', null);
         modal('vault-modal').show();
@@ -1140,7 +1226,8 @@ function wire() {
         toast('外しました', 'success');
       }
     } catch (err) {
-      if (['add-member', 'remove-member', 'add-member-group', 'remove-member-group'].includes(action)) showError('members-error', err.message);
+      if (['revoke-session', 'revoke-other-sessions'].includes(action)) showError('sessions-error', err.message);
+      else if (['add-member', 'remove-member', 'add-member-group', 'remove-member-group'].includes(action)) showError('members-error', err.message);
       else toast(err.message, 'danger');
     }
   });
@@ -1180,6 +1267,13 @@ function wire() {
       showError('members-error', err.message);
       await renderMembers();
     }
+  });
+
+  document.getElementById('activity-filter').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-relation]');
+    if (!button) return;
+    document.querySelectorAll('#activity-filter [data-relation]').forEach((b) => b.classList.toggle('active', b === button));
+    drawActivity();
   });
 
   // フォーム

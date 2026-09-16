@@ -173,7 +173,7 @@ async function handleRequest(req, res) {
     // どちらで来たかを覚えておく。Bearer のときだけ CSRF 検証を省く。
     const bearer = readBearerToken(req);
     const sessionId = bearer || session.sessionIdFromRequest(req);
-    const current = session.touch(sessionId);
+    const current = session.touch(sessionId, { ip: http.clientIp(req) });
     const user = current ? users.toPublic(users.get(current.userId)) : null;
 
     // セッションはあるがユーザーが消えている / 無効化された場合は切る。
