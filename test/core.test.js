@@ -148,12 +148,36 @@ test('ユーザー: 短いパスワードと重複ユーザー名は弾く', () 
   assert.throws(() => users.create({ username: 'Bad Name', password: 'a-long-enough-pass' }));
 });
 
-test('ユーザー: 失敗を重ねるとロックされる', () => {
-  const target = users.create({ username: 'locktest', password: 'a-long-enough-pass' });
-  for (let i = 0; i < 5; i += 1) users.authenticate('locktest', 'wrong-password');
-  const result = users.authenticate('locktest', 'a-long-enough-pass'); // 正しくても通らない
-  assert.strictEqual(result.reason, 'locked');
-  assert.ok(users.isLocked(users.get(target.id)));
+test('ユーザー: 同じ接続元から失敗を重ねると、その組み合わせだけ止まる', () => {
+  // 以前はユーザー単位で止めていたため、誰でも特定の人を締め出せた。
+  // 今は「ユーザー名 × 接続元」で数える（lib/throttle.js）。
+  users.create({ username: 'locktest', password: 'a-long-enough-pass' });
+  for (let i = 0; i < 5; i += 1) users.authenticate('locktest', 'wrong-password', { ip: '10.1.1.1' });
+
+  // 同じ接続元からは、正しいパスワードでも止まる
+  assert.strictEqual(users.authenticate('locktest', 'a-long-enough-pass', { ip: '10.1.1.1' }).reason, 'throttled');
+  // 別の接続元からは入れる
+  assert.strictEqual(users.authenticate('locktest', 'a-long-enough-pass', { ip: '10.2.2.2' }).ok, true);
+});
+
+test('ユーザー: セッションは操作が続いても絶対寿命で切れる', () => {
+  const session = require('../lib/session');
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    const { id } = session.create({ id: 'u1', username: 'u1' });
+    // 7時間ごとに操作し続ける（有効期限8時間には毎回間に合う）
+    for (let hours = 0; hours < 21; hours += 7) {
+      now += 7 * 60 * 60 * 1000;
+      assert.ok(session.touch(id), `${hours + 7}時間目に切れてしまった`);
+    }
+    // ログインから24時間を越えたら、操作が続いていても切れる
+    now += 4 * 60 * 60 * 1000;
+    assert.strictEqual(session.touch(id), null, '操作し続ければ無期限に生きてしまう');
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 // --- Vault とアイテム -------------------------------------------------------

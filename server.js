@@ -37,7 +37,18 @@ const MIME = {
 // --- 静的ファイル -----------------------------------------------------------
 
 function serveStatic(req, res, pathname) {
-  const rel = decodeURIComponent(pathname.replace(/^\/static\//, ''));
+  let rel;
+  try {
+    rel = decodeURIComponent(pathname.replace(/^\/static\//, ''));
+  } catch {
+    http.sendError(req, res, 400, 'URL を解釈できません');
+    return;
+  }
+  // NUL を含むパスは fs が例外を投げるので、先に断る
+  if (rel.includes('\0')) {
+    http.sendError(req, res, 400, 'URL を解釈できません');
+    return;
+  }
   const full = path.join(STATIC_DIR, rel);
   // static ディレクトリの外へ出る要求は弾く
   if (!full.startsWith(STATIC_DIR + path.sep)) {
@@ -165,10 +176,19 @@ async function handleRequest(req, res) {
     const current = session.touch(sessionId);
     const user = current ? users.toPublic(users.get(current.userId)) : null;
 
-    // セッションはあるがユーザーが消えている / 無効化された場合は切る
+    // セッションはあるがユーザーが消えている / 無効化された場合は切る。
+    // API には JSON の 401 を返す。以前は画面と同じくログイン画面へのリダイレクトを
+    // 返していたので、fetch は「200 + HTML」を受け取り、画面も拡張も
+    // 英語の TypeError で止まっていた。
     if (current && (!user || user.status !== 'active')) {
       session.destroy(sessionId);
-      http.redirect(req, res, '/login', { 'Set-Cookie': session.logoutCookieHeader(req) });
+      const logout = { 'Set-Cookie': session.logoutCookieHeader(req) };
+      if (parsed.pathname.startsWith('/api/')) {
+        http.sendJson(req, res, 401, { error: 'ログインしてください' },
+          { ...logout, ...http.corsHeaders(req) });
+      } else {
+        http.redirect(req, res, '/login', logout);
+      }
       done();
       return;
     }
@@ -203,7 +223,15 @@ async function handleRequest(req, res) {
         try {
           ctx.body = await http.readJsonBody(req);
         } catch (err) {
-          http.sendJson(req, res, 400, { error: err.message });
+          http.sendJson(req, res, 400, { error: err.message }, http.corsHeaders(req));
+          done();
+          return;
+        }
+        // null・配列・文字列などは受け付けない。以前は通してしまい、
+        // 各ルートで ctx.body.name を読んだところで TypeError になっていた。
+        if (ctx.body === null || typeof ctx.body !== 'object' || Array.isArray(ctx.body)) {
+          http.sendJson(req, res, 400, { error: '本文は JSON のオブジェクトで送ってください' },
+            http.corsHeaders(req));
           done();
           return;
         }
@@ -213,7 +241,10 @@ async function handleRequest(req, res) {
         // 他サイトに踏ませても攻撃者はトークンを付けられない。
         // ここを「Bearer があれば素通し」にしないよう、Cookie 認証のときだけ検証する。
         const isPreAuth = ['/api/setup', '/api/login'].includes(parsed.pathname);
-        const isExtensionCall = ctx.viaBearer
+        // 以前は Authorization ヘッダーの「形」だけで免除していたので、
+        // でたらめな Bearer を付ければ Origin もトークンも見られなかった
+        // （ブラウザからは到達できず実害は無かったが、外から自由に作れる条件に乗っていた）。
+        const isExtensionCall = (ctx.viaBearer && !!current)
           || (isPreAuth && http.allowedExtensionOrigin(req.headers.origin));
         const csrfResult = isExtensionCall
           ? { ok: true }
