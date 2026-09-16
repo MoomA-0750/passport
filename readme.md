@@ -225,9 +225,62 @@ Bearer なら、トークンを持っている拡張からしか通らない。
 - **更新には version が必要**: 2人が同時に同じアイテムを編集したら、後の方は弾かれる。
   以前は version を省くと検査されず、黙って上書きされていた
 
+## バックアップと復旧
+
+**データとマスターキーは、必ず別々に、別の媒体へ保管する。**
+同じ場所に置くと、バックアップが流出したときに暗号化の意味が無くなる。
+
+### 取る
+
+```bash
+node bin/backup.js /path/to/backups
+```
+
+- 稼働中に取ってよい（書き込みはファイル単位で原子的なので、半端な JSON を掴まない）
+- 出力は `passport-data-YYYYMMDD-HHMMSS.tar.gz` と、件数・鍵の指紋・SHA-256 を書いた `.json`
+- **マスターキーは含まれない**
+- 書きかけの一時ファイル（`*.tmp-*`）は含めない
+
+マスターキー（`/etc/passport/master.key`）は、**初回に1回**、別の媒体へコピーしておく。
+キーは作り直さない限り変わらないので、毎回取る必要はない。バックアップの `.json` に出る
+「鍵の指紋」が、保管しているキーと同じかを時々確かめる。
+
+### 戻す前に確かめる
+
+```bash
+node bin/verify-backup.js passport-data-XXXX.tar.gz --key /path/to/master.key
+```
+
+本番のデータには触らず、一時ディレクトリに展開して確かめる。
+
+- ファイルが作ったときから変わっていないか（SHA-256）
+- **そのマスターキーの世代が、データを作ったときのものと一致するか**
+- すべての Vault の鍵を開けられるか、アイテムの JSON が壊れていないか
+
+**「✗ このマスターキーでは開けません」と出たら、戻さないこと。**
+マスターキーとデータの世代を取り違えて戻すと、全員のログインが失敗する。
+そこで「データが壊れた」と誤診して作り直すと、正しいキーが後から見つかっても復旧できなくなる。
+
+### 戻す
+
+```bash
+systemctl stop passport
+mv /opt/passport/data /opt/passport/data.before-restore   # 消さずに退避する
+tar --extract --gzip --file passport-data-XXXX.tar.gz --directory /opt/passport
+chown -R passport: /opt/passport/data
+systemctl start passport
+```
+
+起動時に、鍵の世代とデータの状態を点検する。合わなければ起動を止め、理由を出す
+（`journalctl -u passport`）。
+
+### systemd で動かす
+
+`deploy/passport.service` に例がある。起動時の点検で止まった場合は、何度起動し直しても
+同じなので、`RestartPreventExitStatus=1` で繰り返さないようにしてある。
+
 ## まだ無いもの
 
-- バックアップとリストアの仕組み（`tar` を呼ぶだけだが未実装。手順は後述）
 - 1Password / CSV からのインポートと、エクスポート
 - パスワードの使い回し・古さのチェック
 - 拡張からの SSH 鍵やセキュアメモの登録（保存を勧めるのはログイン情報だけ）
@@ -288,8 +341,11 @@ key-box/
 ├── bin/
 │   ├── init-master-key.js  # マスターキーの作成
 │   ├── make-cert.js        # 自己署名証明書の作成（openssl を呼ぶ）
+│   ├── backup.js           # data/ のバックアップ（tar を呼ぶ。マスターキーは含めない）
+│   ├── verify-backup.js    # 戻す前に、マスターキーとの組み合わせを確かめる
 │   └── make-icons.js       # 拡張のアイコン（PNG を自前で書き出す）
-├── test/                   # node --test test/
+├── deploy/passport.service # systemd の unit の例
+├── test/                   # node --test
 ├── docs/crypto.md          # 暗号設計と脅威モデル
 └── data/                   # 利用者のデータ（.gitignore 対象）
     ├── users/<id>.json

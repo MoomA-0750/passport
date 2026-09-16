@@ -1,0 +1,41 @@
+# Passport の systemd unit の例。/etc/systemd/system/passport.service に置く。
+#
+#   useradd --system --home /opt/passport --shell /sbin/nologin passport
+#   cp -r . /opt/passport && chown -R passport: /opt/passport
+#   node /opt/passport/bin/init-master-key.js   （/etc/passport/master.key を作る）
+#   chown passport /etc/passport/master.key && chmod 400 /etc/passport/master.key
+#   systemctl daemon-reload && systemctl enable --now passport
+#
+# 初回の起動ログに「セットアップの合言葉」が出る:
+#   journalctl -u passport | grep 合言葉
+
+[Unit]
+Description=Passport（社内用パスワード金庫）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=passport
+Group=passport
+WorkingDirectory=/opt/passport
+ExecStart=/usr/bin/node /opt/passport/server.js
+Environment=PASSPORT_CONFIG=/opt/passport/passport.ini
+Restart=on-failure
+RestartSec=5
+
+# 起動時の点検（鍵の取り違え、ユーザーだけ失われた状態、監査ログに書けない）で
+# 止まった場合は、何度起動し直しても同じなので、繰り返さない
+RestartPreventExitStatus=1
+
+# 守りを足す
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/passport/data /opt/passport/backups
+ReadOnlyPaths=/etc/passport
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
