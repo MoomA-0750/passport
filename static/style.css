@@ -315,3 +315,32 @@ body {
   }
   .app-body, .app-navbar, .auth-card, .modal { display: none !important; }
 }
+
+
+/* --- 過去の値 --- */
+
+.history-block { margin: -.35rem 0 .75rem; padding: 0 1rem; }
+.history-block summary { cursor: pointer; }
+.history-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr auto;
+  gap: .5rem;
+  align-items: center;
+  padding: .25rem 0;
+  border-top: 1px dashed var(--kb-border);
+  font-size: .82rem;
+}
+.history-value { word-break: break-all; }
+.history-value.masked { color: #adb5bd; }
+
+/* --- ゴミ箱 --- */
+
+.trash-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: .75rem;
+  align-items: center;
+  padding: .5rem 0;
+  border-top: 1px solid var(--kb-border);
+}
+.trash-row:first-child { border-top: 0; }

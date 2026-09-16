@@ -312,9 +312,14 @@ function start() {
   // データの状態と、マスターキーの世代を確かめる。おかしければここで止める。
   try {
     integrity.checkOnStartup();
+    audit.checkWritable();
   } catch (err) {
     if (err instanceof integrity.IntegrityError) {
       log.error(err.message);
+      process.exit(1);
+    }
+    if (err.code === 'EACCES' || err.code === 'ENOSPC' || err.code === 'EROFS') {
+      log.error(`監査ログに書けません（${err.code}）。書けない状態では秘密の取り出しができないので、起動を止めました: ${err.message}`);
       process.exit(1);
     }
     throw err;

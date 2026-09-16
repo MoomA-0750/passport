@@ -126,6 +126,7 @@ function renderItems({ searching = false }) {
 
   document.getElementById('btn-new-item').disabled = searching || !canEdit();
   document.getElementById('btn-members').disabled = searching || !vault;
+  document.getElementById('btn-trash').disabled = searching || !canEdit();
 
   const list = document.getElementById('item-list');
   if (!state.items.length) {
@@ -182,6 +183,36 @@ function secretRow(field, label, item, { monospace = true } = {}) {
       </div>
       ${record.updatedAt ? `<div class="detail-hint">最終更新 ${escapeHtml(formatDateTime(record.updatedAt))}</div>` : ''}
     </div>
+    ${historyBlock(field, item)}
+  `;
+}
+
+// 上書き・削除する前の値。取り出すと監査ログに残る。
+function historyBlock(field, item) {
+  const list = (item.secretHistory || {})[field] || [];
+  if (!list.length) return '';
+  const rows = list.map((entry) => {
+    const key = `history:${field}:${entry.index}`;
+    const shown = state.revealed[key] !== undefined;
+    return `
+      <li class="history-row">
+        <span class="history-when">${escapeHtml(formatDateTime(entry.replacedAt))}
+          ${entry.reason === 'deleted' ? '<span class="badge bg-secondary ms-1">削除</span>' : ''}</span>
+        <span class="history-value font-monospace ${shown ? '' : 'masked'}">${
+          shown ? escapeHtml(state.revealed[key]) : '••••••••'}</span>
+        <span class="history-actions">
+          <button class="btn btn-sm btn-link p-0" type="button" data-action="toggle-history"
+                  data-field="${escapeHtml(field)}" data-index="${entry.index}">${shown ? '隠す' : '表示'}</button>
+          <button class="btn btn-sm btn-link p-0 ms-2" type="button" data-action="copy-history"
+                  data-field="${escapeHtml(field)}" data-index="${entry.index}">コピー</button>
+        </span>
+      </li>`;
+  }).join('');
+  return `
+    <details class="history-block">
+      <summary class="small text-muted">過去の値（${list.length}件）</summary>
+      <ul class="list-unstyled mb-0">${rows}</ul>
+    </details>
   `;
 }
 
@@ -710,6 +741,43 @@ async function renderMembers() {
   }
 }
 
+// --- ゴミ箱 -----------------------------------------------------------------
+
+async function openTrash() {
+  const vault = currentVault();
+  if (!vault) return;
+  showError('trash-error', null);
+  document.getElementById('trash-vault-name').textContent = `${vault.icon} ${vault.name}`;
+  modal('trash-modal').show();
+  await renderTrash();
+}
+
+async function renderTrash() {
+  const vault = currentVault();
+  const list = document.getElementById('trash-list');
+  try {
+    const { items: trashed } = await apiFetch(`/api/vaults/${vault.id}/trash`);
+    if (!trashed.length) {
+      list.innerHTML = '<li class="text-muted small">ゴミ箱は空です</li>';
+      return;
+    }
+    const isOwner = vault.role === 'owner';
+    list.innerHTML = trashed.map((item) => `
+      <li class="trash-row" data-item-id="${escapeHtml(item.id)}">
+        <span class="trash-title">${TYPE_ICONS[item.type] || '🔑'} ${escapeHtml(item.title)}
+          <span class="text-muted small ms-1">${escapeHtml(item.username || '')}</span></span>
+        <span class="trash-when text-muted small">${escapeHtml(formatDateTime(item.deletedAt))}に削除</span>
+        <span class="trash-actions">
+          <button class="btn btn-sm btn-outline-primary" type="button" data-action="restore-item">戻す</button>
+          ${isOwner ? '<button class="btn btn-sm btn-outline-danger ms-1" type="button" data-action="purge-item">完全に削除</button>' : ''}
+        </span>
+      </li>
+    `).join('');
+  } catch (err) {
+    showError('trash-error', err.message);
+  }
+}
+
 // --- パスワード生成器 -------------------------------------------------------
 
 function regenerate() {
@@ -856,6 +924,28 @@ function wire() {
         const value = await reveal(button.dataset.field, 'copy');
         await copyToClipboard(value);
         toast('コピーしました（監査ログに残ります）', 'success');
+      } else if (action === 'toggle-history' || action === 'copy-history') {
+        const item = state.items.find((i) => i.id === state.itemId);
+        const field = button.dataset.field;
+        const index = Number(button.dataset.index);
+        const key = `history:${field}:${index}`;
+        if (action === 'toggle-history' && state.revealed[key] !== undefined) {
+          delete state.revealed[key];
+        } else {
+          const { value } = await apiFetch(`/api/vaults/${item.vaultId}/items/${item.id}/history/reveal`, {
+            method: 'POST', body: { field, index }
+          });
+          if (action === 'copy-history') {
+            await copyToClipboard(value);
+            toast('過去の値をコピーしました（監査ログに残ります）', 'success');
+            return;
+          }
+          state.revealed[key] = value;
+        }
+        const { item: fresh } = await apiFetch(`/api/vaults/${item.vaultId}/items/${item.id}`);
+        renderDetail(fresh);
+        const details = document.querySelector(`#detail-content details.history-block`);
+        if (details) details.open = true;
       } else if (action === 'copy-plain') {
         await copyToClipboard(button.dataset.value);
         toast('コピーしました', 'success');
@@ -884,9 +974,9 @@ function wire() {
         openItemModal(fresh);
       } else if (action === 'delete-item') {
         const item = state.items.find((i) => i.id === state.itemId);
-        if (!window.confirm(`「${item.title}」を削除します。元に戻せません。よろしいですか？`)) return;
+        if (!window.confirm(`「${item.title}」をゴミ箱へ移します。あとでゴミ箱から戻せます。`)) return;
         await apiFetch(`/api/vaults/${item.vaultId}/items/${item.id}`, { method: 'DELETE' });
-        toast('削除しました', 'success');
+        toast('ゴミ箱へ移しました', 'success');
         await loadVaults();
         await loadItems();
       }
@@ -917,6 +1007,24 @@ function wire() {
         openItemModal(null);
       } else if (action === 'manage-members') {
         await openMembers();
+      } else if (action === 'open-trash') {
+        await openTrash();
+      } else if (action === 'restore-item' || action === 'purge-item') {
+        const row = button.closest('[data-item-id]');
+        const itemId = row.dataset.itemId;
+        if (action === 'purge-item'
+          && !window.confirm('完全に削除します。パスワードも履歴も二度と戻せません。よろしいですか？')) return;
+        showError('trash-error', null);
+        if (action === 'restore-item') {
+          await apiFetch(`/api/vaults/${state.vaultId}/trash/${itemId}/restore`, { method: 'POST' });
+          toast('戻しました', 'success');
+        } else {
+          await apiFetch(`/api/vaults/${state.vaultId}/trash/${itemId}`, { method: 'DELETE' });
+          toast('完全に削除しました', 'success');
+        }
+        await renderTrash();
+        await loadVaults();
+        await loadItems();
       } else if (action === 'generate-password') {
         state.generatorTarget = 'item-password';
         regenerate();
@@ -1014,8 +1122,23 @@ function wire() {
     document.addEventListener(type, resetIdleTimer, { passive: true });
   }
   // タブを離れたら、表示中の秘密は消しておく
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) clearRevealed();
+  // タブを離れたら、表示中の秘密を画面からも消す。
+  // 以前は変数だけ消して DOM に平文を残していたので、戻ると平文が見えたままで、
+  // しかも「隠す」を押すと逆に取り出し直して監査ログが1件余計に積まれていた。
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden) return;
+    const hadSecrets = Object.keys(state.revealed).length > 0;
+    clearRevealed();
+    if (!hadSecrets || !state.itemId) return;
+    const item = state.items.find((i) => i.id === state.itemId);
+    if (!item) return;
+    try {
+      const { item: fresh } = await apiFetch(`/api/vaults/${item.vaultId}/items/${item.id}`);
+      renderDetail(fresh);
+    } catch {
+      const content = document.getElementById('detail-content');
+      if (content) content.innerHTML = '';
+    }
   });
   resetIdleTimer();
 }
