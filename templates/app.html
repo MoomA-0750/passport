@@ -7,6 +7,10 @@
              placeholder="タイトル・ユーザー名・URL・タグで検索（秘密の中身は検索できません）">
     </form>
 
+    <button class="btn btn-sm btn-outline-light me-2 position-relative" type="button" data-action="open-checkup" title="点検">
+      点検
+      <span class="badge rounded-pill bg-danger ms-1" id="checkup-badge" hidden></span>
+    </button>
     <div class="dropdown">
       <button class="btn btn-sm btn-outline-light dropdown-toggle" data-bs-toggle="dropdown" type="button">
         <span id="nav-username">…</span>
@@ -171,6 +175,25 @@
             <textarea class="form-control" id="item-note" rows="4"
                       placeholder="手順、接続条件、注意点など。暗号化されます"></textarea>
           </div>
+
+          <div class="col-md-4">
+            <label class="form-label" for="item-rotation">パスワードを変える周期</label>
+            <select class="form-select" id="item-rotation">
+              <option value="">決めない</option>
+              <option value="30">30日</option>
+              <option value="60">60日</option>
+              <option value="90">90日</option>
+              <option value="180">180日</option>
+              <option value="365">1年</option>
+              <option value="730">2年</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="item-expires">有効期限</label>
+            <input class="form-control" type="date" id="item-expires">
+            <div class="form-text">証明書・ライセンスなど</div>
+          </div>
+          <div class="col-md-4"></div>
 
           <div class="col-md-8">
             <label class="form-label" for="item-tags">タグ</label>
@@ -387,6 +410,37 @@
         <button class="btn btn-primary" type="submit">変更する</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- 点検 -->
+<div class="modal fade" id="checkup-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">点検</h5>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="閉じる"></button>
+      </div>
+      <div class="modal-body">
+        <section class="mb-4">
+          <h6>期限切れ・期限間近 <small class="text-muted">（30日以内）</small></h6>
+          <div id="checkup-due"></div>
+        </section>
+        <section>
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h6 class="mb-0">弱い・使い回し・古いパスワード</h6>
+            <button class="btn btn-sm btn-primary" type="button" data-action="run-checkup">点検する</button>
+            <small class="text-muted" id="checkup-status"></small>
+          </div>
+          <p class="text-muted small">
+            編集できる（editor 以上の）Vault のパスワードをサーバーで復号して調べます。値は画面に出ず、比べた結果も保存しません。
+            点検したことは Vault ごとに監査ログに残ります。
+          </p>
+          <div id="checkup-result"></div>
+        </section>
+        <div class="alert alert-danger d-none mt-3" id="checkup-error"></div>
+      </div>
+    </div>
   </div>
 </div>
 

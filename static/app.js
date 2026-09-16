@@ -335,6 +335,8 @@ function renderDetail(item) {
       作成 ${escapeHtml(formatDateTime(item.createdAt))}
       / 更新 ${escapeHtml(formatDateTime(item.updatedAt))}（${escapeHtml(formatRelative(item.updatedAt))}）
       ${item.passwordUpdatedAt ? `<br>パスワードの最終変更 ${escapeHtml(formatRelative(item.passwordUpdatedAt))}` : ''}
+      ${item.rotationDays ? `<br>パスワードを変える周期 ${item.rotationDays}日` : ''}
+      ${item.expiresAt ? `<br>有効期限 ${escapeHtml(item.expiresAt)}` : ''}
     </div>
   `;
 }
@@ -450,6 +452,8 @@ function openItemModal(item) {
   document.getElementById('item-username').value = item ? item.username : '';
   document.getElementById('item-urls').value = item ? (item.urls || []).join(' ') : '';
   document.getElementById('item-tags').value = item ? (item.tags || []).join(', ') : '';
+  document.getElementById('item-rotation').value = item && item.rotationDays ? String(item.rotationDays) : '';
+  document.getElementById('item-expires').value = item && item.expiresAt ? item.expiresAt : '';
   document.getElementById('item-favorite').checked = item ? item.favorite : false;
 
   // 既存の秘密は初期値に入れない（開いただけで復号しないため）。
@@ -622,6 +626,8 @@ async function submitItem(event) {
     urls: document.getElementById('item-urls').value,
     tags: document.getElementById('item-tags').value,
     favorite: document.getElementById('item-favorite').checked,
+    rotationDays: document.getElementById('item-rotation').value || null,
+    expiresAt: document.getElementById('item-expires').value || null,
     secrets
   };
 
@@ -640,6 +646,7 @@ async function submitItem(event) {
       modal('item-modal').hide();
       await loadVaults();
       await loadItems();
+      refreshCheckupBadge();
       await selectItem(editingItem.vaultId, editingItem.id);
     } else {
       const { item } = await apiFetch(`/api/vaults/${state.vaultId}/items`, { method: 'POST', body: payload });
@@ -647,6 +654,7 @@ async function submitItem(event) {
       modal('item-modal').hide();
       await loadVaults();
       await loadItems();
+      refreshCheckupBadge();
       await selectItem(item.vaultId, item.id);
     }
   } catch (err) {
@@ -792,6 +800,70 @@ async function renderMembers() {
   } else {
     addArea.classList.add('d-none');
   }
+}
+
+// --- 点検 -------------------------------------------------------------------
+
+const WEAK_REASON_LABELS = { short: '短い', simple: '単純', common: 'よくある語' };
+const UNREADABLE_LABELS = { rollback: '古い世代に巻き戻されている', tampered: '復号できない', vault_key: 'Vault の鍵を開けられない' };
+
+function checkupRef(ref, extra = '') {
+  const clickable = ref.itemId
+    ? `<a href="#" data-action="goto-item" data-vault-id="${escapeHtml(ref.vaultId)}" data-item-id="${escapeHtml(ref.itemId)}">${escapeHtml(ref.title)}</a>`
+    : escapeHtml(ref.title);
+  return `<li>${clickable}
+    <span class="text-muted small">${escapeHtml(ref.vaultName)}${ref.username ? ` / ${escapeHtml(ref.username)}` : ''}</span>
+    ${extra}</li>`;
+}
+
+function describeDue(d) {
+  const what = d.kind === 'rotation' ? '変える時期' : '有効期限';
+  const when = d.overdue ? `${-d.daysLeft}日過ぎています` : (d.daysLeft === 0 ? '今日まで' : `あと${d.daysLeft}日`);
+  return `<span class="badge bg-${d.overdue ? 'danger' : 'warning text-dark'} ms-1">${what}: ${when}</span>`;
+}
+
+async function refreshCheckupBadge() {
+  try {
+    const { overdue, soon } = await apiFetch('/api/checkup/reminders');
+    const badge = document.getElementById('checkup-badge');
+    const total = overdue + soon;
+    badge.hidden = total === 0;
+    badge.textContent = String(total);
+    badge.className = `badge rounded-pill ms-1 ${overdue ? 'bg-danger' : 'bg-warning text-dark'}`;
+    badge.title = `期限切れ ${overdue}件 / 30日以内 ${soon}件`;
+  } catch {
+    // バッジが出ないだけ。ほかの操作は止めない
+  }
+}
+
+async function openCheckup() {
+  showError('checkup-error', null);
+  modal('checkup-modal').show();
+  const { items } = await apiFetch('/api/checkup/reminders');
+  document.getElementById('checkup-due').innerHTML = items.length
+    ? `<ul class="mb-0">${items.map((d) => checkupRef(d, describeDue(d))).join('')}</ul>`
+    : '<p class="text-muted small mb-0">ありません</p>';
+}
+
+async function runCheckup() {
+  showError('checkup-error', null);
+  document.getElementById('checkup-status').textContent = '調べています…';
+  const r = await apiFetch('/api/checkup/run', { method: 'POST' });
+  document.getElementById('checkup-status').textContent = `${r.examined}件を調べました（${formatDateTime(r.checkedAt)}）`;
+  const section = (title, body, empty) => `
+    <h6 class="mt-3">${title}</h6>
+    ${body || `<p class="text-muted small mb-0">${empty}</p>`}`;
+  document.getElementById('checkup-result').innerHTML = [
+    section(`使い回し（${r.reused.length}組）`, r.reused.length ? r.reused.map((group) => `
+      <div class="border rounded p-2 mb-2"><div class="small text-muted mb-1">同じパスワードの ${group.length} 件</div>
+      <ul class="mb-0">${group.map((ref) => checkupRef(ref)).join('')}</ul></div>`).join('') : '', 'ありません'),
+    section(`弱い（${r.weak.length}件）`, r.weak.length ? `<ul>${r.weak.map((ref) => checkupRef(ref,
+      ref.reasons.map((x) => `<span class="badge bg-warning text-dark ms-1">${escapeHtml(WEAK_REASON_LABELS[x] || x)}</span>`).join(''))).join('')}</ul>` : '', 'ありません'),
+    section(`古い（周期を決めていないもので、1年以上変えていない: ${r.old.length}件）`, r.old.length
+      ? `<ul>${r.old.map((ref) => checkupRef(ref, `<span class="badge bg-secondary ms-1">${ref.ageDays}日</span>`)).join('')}</ul>` : '', 'ありません'),
+    r.unreadable.length ? section(`読めない（${r.unreadable.length}件）`, `<ul>${r.unreadable.map((ref) => checkupRef(ref,
+      `<span class="badge bg-danger ms-1">${escapeHtml(UNREADABLE_LABELS[ref.reason] || ref.reason)}</span>`)).join('')}</ul>`, '') : ''
+  ].join('');
 }
 
 // --- ログイン中の端末 / 自分の履歴 ------------------------------------------
@@ -1119,6 +1191,24 @@ function wire() {
         showError('pw-error', null);
         document.getElementById('password-form').reset();
         modal('password-modal').show();
+      } else if (action === 'open-checkup') {
+        await openCheckup();
+      } else if (action === 'run-checkup') {
+        button.disabled = true;
+        try {
+          await runCheckup();
+        } finally {
+          button.disabled = false;
+        }
+      } else if (action === 'goto-item') {
+        event.preventDefault();
+        modal('checkup-modal').hide();
+        state.vaultId = button.dataset.vaultId;
+        state.searchQuery = '';
+        document.getElementById('search-input').value = '';
+        renderVaults();
+        await loadItems();
+        await selectItem(button.dataset.vaultId, button.dataset.itemId);
       } else if (action === 'open-sessions') {
         showError('sessions-error', null);
         modal('sessions-modal').show();
@@ -1226,7 +1316,10 @@ function wire() {
         toast('外しました', 'success');
       }
     } catch (err) {
-      if (['revoke-session', 'revoke-other-sessions'].includes(action)) showError('sessions-error', err.message);
+      if (action === 'run-checkup') {
+        showError('checkup-error', err.message);
+        document.getElementById('checkup-status').textContent = '';
+      } else if (['revoke-session', 'revoke-other-sessions'].includes(action)) showError('sessions-error', err.message);
       else if (['add-member', 'remove-member', 'add-member-group', 'remove-member-group'].includes(action)) showError('members-error', err.message);
       else toast(err.message, 'danger');
     }
@@ -1338,6 +1431,7 @@ function wire() {
   try {
     await loadVaults();
     await loadItems();
+    refreshCheckupBadge();
     if (KB.data.user.mustChangePassword) {
       toast('初期パスワードのままです。変更してください', 'warning');
       modal('password-modal').show();
