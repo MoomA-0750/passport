@@ -1,5 +1,5 @@
 'use strict';
-// KeyBox のサーバー。node server.js で起動する。
+// Passport のサーバー。node server.js で起動する。
 //
 // WordBox と同じく、フレームワークを使わず Node 標準の http / https だけで組む。
 // ビルドなし、再起動なしで動く（テンプレートと static はリクエストごとに読める）。
@@ -9,7 +9,7 @@ const path = require('path');
 const url = require('url');
 
 const config = require('./lib/config');
-const log = require('./lib/logger')('keybox:server');
+const log = require('./lib/logger')('passport:server');
 const store = require('./lib/store');
 const keyring = require('./lib/keyring');
 const session = require('./lib/session');
@@ -79,7 +79,7 @@ function handlePage(req, res, ctx) {
   }
 
   if (pathname === '/setup') {
-    renderPage(req, res, 'setup', { title: 'KeyBox のセットアップ', bodyClass: 'page-centered' });
+    renderPage(req, res, 'setup', { title: 'Passport のセットアップ', bodyClass: 'page-centered' });
     return;
   }
 
@@ -88,7 +88,7 @@ function handlePage(req, res, ctx) {
       http.redirect(req, res, '/');
       return;
     }
-    renderPage(req, res, 'login', { title: 'KeyBox にログイン', bodyClass: 'page-centered' });
+    renderPage(req, res, 'login', { title: 'Passport にログイン', bodyClass: 'page-centered' });
     return;
   }
 
@@ -99,7 +99,7 @@ function handlePage(req, res, ctx) {
 
   if (pathname === '/' || pathname === '/vaults') {
     renderPage(req, res, 'app', {
-      title: 'KeyBox',
+      title: 'Passport',
       bodyClass: 'page-app',
       bootstrapData: JSON.stringify({
         user: ctx.user,
@@ -117,7 +117,7 @@ function handlePage(req, res, ctx) {
       return;
     }
     renderPage(req, res, 'admin', {
-      title: 'KeyBox の管理',
+      title: 'Passport の管理',
       bodyClass: 'page-app',
       bootstrapData: JSON.stringify({
         user: ctx.user,
@@ -223,7 +223,7 @@ function loadTlsOptions() {
     if (!fs.existsSync(file)) {
       log.error(`TLS のファイルがありません: ${file}`);
       log.error('  自己署名の証明書は `node bin/make-cert.js` で作れます。');
-      log.error('  Nginx で TLS を終端する構成なら keybox.ini の [server] tls = off にしてください。');
+      log.error('  Nginx で TLS を終端する構成なら passport.ini の [server] tls = off にしてください。');
       process.exit(1);
     }
   }
@@ -236,7 +236,7 @@ function loadTlsOptions() {
 }
 
 function start() {
-  log.info('KeyBox を起動します');
+  log.info('Passport を起動します');
   if (config.configPath) log.info(`設定ファイル: ${config.configPath}`);
   else log.info('設定ファイルなし（既定値で動きます）');
 

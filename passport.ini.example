@@ -1,4 +1,4 @@
-; KeyBox 設定ファイル。keybox.ini としてプロジェクトルートに置く。
+; Passport 設定ファイル。passport.ini としてプロジェクトルートに置く。
 ; 環境変数が最優先、次にこのファイル、最後に既定値。
 
 [server]
@@ -20,9 +20,9 @@ dataDir = ./data
 
 [crypto]
 ; マスターキーの在処。data/ の外、バックアップ対象外の場所に置く。
-; 環境変数 KEYBOX_MASTER_PASSPHRASE を与えた場合はそちらが優先され、
+; 環境変数 PASSPORT_MASTER_PASSPHRASE を与えた場合はそちらが優先され、
 ; このファイルは使われない（起動ごとに人手でアンロックする運用）。
-masterKeyFile = /etc/keybox/master.key
+masterKeyFile = /etc/passport/master.key
 
 [session]
 ; セッションの有効期限（時間）。金庫なので短めが既定。

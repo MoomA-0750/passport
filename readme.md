@@ -1,4 +1,4 @@
-# KeyBox
+# Passport
 
 社内で使うパスワード金庫。1Password のような Vault と共有の仕組みを、
 [WordBox](https://github.com/MoomA-0750/word-box) と同じ材料で作る。
@@ -15,7 +15,7 @@ WordBox との違いは **`node_modules` を1つも使わない**こと。
 WordBox は VS Code の `node_modules` から `fs-extra` や `uuid` などを抽出しているが、
 金庫は持ち込む部品を減らしたいので標準ライブラリで置き換えた。
 
-| WordBox が使っているもの | KeyBox での代わり |
+| WordBox が使っているもの | Passport での代わり |
 |---|---|
 | `uuid` | `crypto.randomUUID()`（標準） |
 | `ini` | `lib/config.js` の小さな自前パーサー |
@@ -59,7 +59,7 @@ scrypt、HMAC が入っているので、1Password 相当の鍵階層はこれ�
 
 要点だけ:
 
-- マスターキーは `data/` の外（既定 `/etc/keybox/master.key`、モード 0400）
+- マスターキーは `data/` の外（既定 `/etc/passport/master.key`、モード 0400）
 - Vault ごとの鍵を KEK で包み、アイテムごとに HKDF で鍵を分ける
 - AAD で「この Vault の、このアイテムの、このフィールドの、この世代」を縛る
 - パスワードは scrypt + マスターキー由来の pepper でハッシュ
@@ -72,8 +72,8 @@ scrypt、HMAC が入っているので、1Password 相当の鍵階層はこれ�
 key-box/
 ├── server.js               # HTTP(S) サーバーとルーティング
 ├── lib/
-│   ├── config.js           # keybox.ini + 環境変数
-│   ├── logger.js           # 名前空間つきログ（DEBUG=keybox:*）
+│   ├── config.js           # passport.ini + 環境変数
+│   ├── logger.js           # 名前空間つきログ（DEBUG=passport:*）
 │   ├── http.js             # セキュリティヘッダー、本文の読み取り
 │   ├── template.js         # {{variable}} 置換（既定でエスケープ）
 │   ├── store.js            # 原子的な JSON ストア、楽観ロック、パス封じ
@@ -106,24 +106,24 @@ key-box/
 
 ```bash
 sudo node bin/init-master-key.js
-sudo chown keybox /etc/keybox/master.key
-sudo chmod 400 /etc/keybox/master.key
+sudo chown passport /etc/passport/master.key
+sudo chmod 400 /etc/passport/master.key
 ```
 
 **このファイルを失うと、保存したパスワードは誰にも復号できない。**
-KeyBox のデータとは別の場所にバックアップを取る。
+Passport のデータとは別の場所にバックアップを取る。
 
 起動ごとに人手でアンロックしたい場合は、キーファイルの代わりに
-`KEYBOX_MASTER_PASSPHRASE` を渡す（systemd での自動起動はできなくなる）。
+`PASSPORT_MASTER_PASSPHRASE` を渡す（systemd での自動起動はできなくなる）。
 
 ### 2. TLS を用意する
 
 ```bash
-node bin/make-cert.js keybox.example.local 192.168.1.50
+node bin/make-cert.js passport.example.local 192.168.1.50
 ```
 
 社内 CA の証明書が取れるならそちらを使う（ブラウザの警告が出ない）。
-Nginx で TLS を終端する場合は `keybox.ini` で `tls = off`、`trustProxy = on`、
+Nginx で TLS を終端する場合は `passport.ini` で `tls = off`、`trustProxy = on`、
 `host = 127.0.0.1` にする。
 
 HTTPS にしておく理由は2つ。通信の保護と、
@@ -133,7 +133,7 @@ HTTPS にしておく理由は2つ。通信の保護と、
 ### 3. 設定して起動
 
 ```bash
-cp keybox.ini.example keybox.ini
+cp passport.ini.example passport.ini
 node server.js
 ```
 
@@ -143,13 +143,13 @@ node server.js
 
 | 変数 | 意味 |
 |---|---|
-| `KEYBOX_PORT` / `KEYBOX_HOST` | 待ち受け |
-| `KEYBOX_TLS` / `KEYBOX_TLS_KEY` / `KEYBOX_TLS_CERT` | TLS |
-| `KEYBOX_DATA_DIR` | データの置き場所 |
-| `KEYBOX_MASTER_KEY_FILE` | マスターキーのファイル |
-| `KEYBOX_MASTER_PASSPHRASE` | パスフレーズ運用（キーファイルより優先） |
-| `KEYBOX_CONFIG` | 設定ファイルの場所 |
-| `DEBUG=keybox:*` | 詳細ログ（`keybox:auth`、`keybox:crypto` などで絞れる） |
+| `PASSPORT_PORT` / `PASSPORT_HOST` | 待ち受け |
+| `PASSPORT_TLS` / `PASSPORT_TLS_KEY` / `PASSPORT_TLS_CERT` | TLS |
+| `PASSPORT_DATA_DIR` | データの置き場所 |
+| `PASSPORT_MASTER_KEY_FILE` | マスターキーのファイル |
+| `PASSPORT_MASTER_PASSPHRASE` | パスフレーズ運用（キーファイルより優先） |
+| `PASSPORT_CONFIG` | 設定ファイルの場所 |
+| `DEBUG=passport:*` | 詳細ログ（`passport:auth`、`passport:crypto` などで絞れる） |
 
 ## 権限
 

@@ -7,7 +7,7 @@ backups/
 *.pem
 *.crt
 master.key
-keybox.ini
+passport.ini
 
 # OS / エディタ
 .DS_Store

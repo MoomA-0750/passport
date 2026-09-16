@@ -13,7 +13,7 @@ const keyring = require('../lib/keyring');
 const file = config.crypto.masterKeyFile;
 
 if (config.crypto.masterPassphrase) {
-  console.log('KEYBOX_MASTER_PASSPHRASE が設定されています。');
+  console.log('PASSPORT_MASTER_PASSPHRASE が設定されています。');
   console.log('パスフレーズ運用ではキーファイルは要りません。');
   process.exit(0);
 }
@@ -31,7 +31,7 @@ try {
   console.error(`作成に失敗しました: ${err.message}`);
   if (err.code === 'EACCES') {
     console.error(`  ${file} を作る権限がありません。sudo で実行するか、`);
-    console.error('  keybox.ini の [crypto] masterKeyFile を書き込める場所にしてください。');
+    console.error('  passport.ini の [crypto] masterKeyFile を書き込める場所にしてください。');
   }
   process.exit(1);
 }
@@ -39,8 +39,8 @@ try {
 console.log(`マスターキーを作りました: ${file}`);
 console.log('');
 console.log('必ずやること:');
-console.log(`  1. chown ${process.env.SUDO_USER || 'keybox'} ${file}   （KeyBox を動かすユーザーが読めるように）`);
+console.log(`  1. chown ${process.env.SUDO_USER || 'passport'} ${file}   （Passport を動かすユーザーが読めるように）`);
 console.log(`  2. chmod 400 ${file}`);
-console.log('  3. このファイルを、KeyBox のデータとは別の場所へバックアップする');
+console.log('  3. このファイルを、Passport のデータとは別の場所へバックアップする');
 console.log('');
 console.log('このファイルを失うと、保存したパスワードは誰にも復号できません。');

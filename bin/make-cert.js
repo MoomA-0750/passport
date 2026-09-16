@@ -2,7 +2,7 @@
 'use strict';
 // 自己署名の TLS 証明書を作る。
 //
-//   node bin/make-cert.js keybox.example.local 192.168.1.50
+//   node bin/make-cert.js passport.example.local 192.168.1.50
 //
 // Node の標準ライブラリだけでは証明書を発行できないので、RHEL に入っている
 // openssl コマンドを呼ぶ（オフライン環境でも ISO レポジトリから入る）。
@@ -43,7 +43,7 @@ prompt = no
 
 [dn]
 CN = ${names[0]}
-O = KeyBox
+O = Passport
 
 [v3]
 subjectAltName = ${san}

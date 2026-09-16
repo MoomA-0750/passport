@@ -1,4 +1,4 @@
-/* KeyBox の見た目。Bootstrap 5 の上に足りない分だけ足す。 */
+/* Passport の見た目。Bootstrap 5 の上に足りない分だけ足す。 */
 
 :root {
   --kb-navbar: #1f2933;
@@ -295,7 +295,7 @@ body {
 
 @media print {
   body::before {
-    content: "KeyBox の画面は印刷できません";
+    content: "Passport の画面は印刷できません";
     font-size: 1.2rem;
   }
   .app-body, .app-navbar, .auth-card, .modal { display: none !important; }

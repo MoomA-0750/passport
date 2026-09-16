@@ -197,7 +197,7 @@ function renderDetail(item) {
   const urlsHtml = (item.urls || []).map((url) => {
     const safe = /^https?:\/\//i.test(url);
     return safe
-      // rel=noreferrer は、遷移先に KeyBox の URL を渡さないため
+      // rel=noreferrer は、遷移先に Passport の URL を渡さないため
       ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
       : escapeHtml(url);
   }).join('<br>');

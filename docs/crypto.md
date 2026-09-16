@@ -1,4 +1,4 @@
-# KeyBox の暗号設計と脅威モデル
+# Passport の暗号設計と脅威モデル
 
 このファイルは「なぜこうなっているか」を残すためのもの。実装を変えるときは先にここを読む。
 
@@ -32,7 +32,7 @@
 | アイテムの **タイトル・ユーザー名・URL・タグは平文** | 一覧と検索を成立させるため。「どのサイトのアカウントを持っているか」は漏れる。秘密そのもの（パスワード / TOTP / セキュアメモ / カスタムフィールド）は必ず暗号化 |
 | サーバーはログイン時に平文パスワードを受け取る | E2E ではないため。HTTPS と、受け取り後すぐ捨てることで緩和 |
 
-1Password 本体との決定的な違いはここ。1Password は「サーバーは何も知らない」が出発点だが、KeyBox は
+1Password 本体との決定的な違いはここ。1Password は「サーバーは何も知らない」が出発点だが、Passport は
 「サーバーは知っているが、盗まれたファイルは何も語らない」を狙う。1人の管理者が運用する社内ツールとしては、
 実装量と運用の現実性を取ってこちらを選んだ。
 
@@ -54,19 +54,19 @@ Node 標準 crypto は X25519 の ECDH を持っているので、材料を増�
 
 ```
 マスターキー（32バイト）
-│   ・キーファイル /etc/keybox/master.key （既定。0400。systemd で自動起動できる）
-│   ・または環境変数 KEYBOX_MASTER_PASSPHRASE から scrypt で導出（起動ごとに人手アンロック）
+│   ・キーファイル /etc/passport/master.key （既定。0400。systemd で自動起動できる）
+│   ・または環境変数 PASSPORT_MASTER_PASSPHRASE から scrypt で導出（起動ごとに人手アンロック）
 │
-├─ KEK = HKDF-SHA256(masterKey, info="keybox/kek/v1")
+├─ KEK = HKDF-SHA256(masterKey, info="passport/kek/v1")
 │   │
 │   └─ Vault Key（Vault ごとに 32バイトのランダム）
 │       ・KEK で AES-256-GCM 暗号化して vault.json に保存
 │       │
-│       └─ Item Key = HKDF-SHA256(vaultKey, salt=itemId, info="keybox/item/v1")
+│       └─ Item Key = HKDF-SHA256(vaultKey, salt=itemId, info="passport/item/v1")
 │           ・秘密フィールドごとに AES-256-GCM
 │           ・AAD = "vaultId|itemId|fieldName|version"
 │
-└─ AUTH_PEPPER = HKDF-SHA256(masterKey, info="keybox/pepper/v1")
+└─ AUTH_PEPPER = HKDF-SHA256(masterKey, info="passport/pepper/v1")
     ・パスワードハッシュに混ぜる。DB だけ盗まれてもオフライン総当たりができない
 ```
 

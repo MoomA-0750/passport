@@ -8,10 +8,10 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'keybox-test-'));
-process.env.KEYBOX_DATA_DIR = path.join(TMP, 'data');
-process.env.KEYBOX_MASTER_KEY_FILE = path.join(TMP, 'keys', 'master.key');
-delete process.env.KEYBOX_MASTER_PASSPHRASE;
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'passport-test-'));
+process.env.PASSPORT_DATA_DIR = path.join(TMP, 'data');
+process.env.PASSPORT_MASTER_KEY_FILE = path.join(TMP, 'keys', 'master.key');
+delete process.env.PASSPORT_MASTER_PASSPHRASE;
 
 const test = require('node:test');
 const assert = require('node:assert');
