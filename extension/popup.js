@@ -360,6 +360,13 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
       document.getElementById('password').value
     );
     document.getElementById('password').value = '';
+    // 開いているページが「ロックされている」と覚えたままなので、捨ててもらう。
+    // これが無いと、ページを読み込み直すまでメニューがロック表示のままになる。
+    try {
+      await chrome.runtime.sendMessage({ type: 'inline:unlocked' });
+    } catch {
+      // service worker が寝ていても、次にページを開いたときには直る
+    }
     show('main');
     await Promise.all([loadPage(), refreshInlineState()]);
   } catch (err) {

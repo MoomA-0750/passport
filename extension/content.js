@@ -375,12 +375,17 @@
   }
 
   async function loadCandidates() {
-    if (candidates && Date.now() - candidatesAt < CACHE_MS) return candidates;
+    // ロック中や、取れなかったときの結果は覚えない。
+    // 覚えてしまうと、別の画面でログインしても、こちらは
+    // キャッシュが切れるまで「ロックされています」と言い続ける。
+    const usable = candidates && !locked && Date.now() - candidatesAt < CACHE_MS;
+    if (usable) return candidates;
+
     // どのホストの分を返すかは background が sender から決める。ここからは指定しない。
     const response = await ask({ type: 'inline:candidates' });
     locked = !!response.locked;
     candidates = response.items || [];
-    candidatesAt = Date.now();
+    candidatesAt = (locked || response.error) ? 0 : Date.now();
     return candidates;
   }
 
@@ -652,6 +657,11 @@
   }, true);
 
   document.addEventListener('focusout', (event) => {
+    // Escape で閉じたのは「今この欄にいる間は出さないで」という意味にする。
+    // 一度離れて戻ってきたら、また出してよい（そうしないと、その欄では
+    // 読み込み直すまで二度とメニューが出なくなる）。
+    if (event.target === dismissedFor) dismissedFor = null;
+
     // メニューの中を押したときに閉じてしまわないよう、少し待つ
     setTimeout(() => {
       if (anchorField && document.activeElement !== anchorField) {
@@ -680,14 +690,35 @@
     if (menu) position(menu, anchorField);
   });
 
-  // ロックしたら、開きっぱなしのメニューも閉じて候補を捨てる
+  // 金庫の状態が変わったと知らされたら、持っている候補を捨てる。
+  //   ・ロックされた → メニューもバーも閉じる
+  //   ・ログインされた → 開いているメニューはその場で描き直す
+  //     （利用者から見ると「ログインしたのに、まだロックと言われる」を無くすため）
   chrome.runtime.onMessage.addListener((message) => {
-    if (message && message.type === 'inline:invalidate') {
-      candidates = null;
-      candidatesAt = 0;
-      hideMenu();
+    if (!message || message.type !== 'inline:invalidate') return;
+    candidates = null;
+    candidatesAt = 0;
+    locked = false;
+
+    if (message.reason === 'unlocked') {
+      const field = anchorField;
       hideBar();
+      if (!field) return;
+      void (async () => {
+        await loadCandidates();
+        // 描き直す間に別の欄へ移っていたら、そちらに任せる
+        if (anchorField !== field && document.activeElement !== field) return;
+        if (!locked && (!candidates || candidates.length === 0)) {
+          hideMenu();
+          return;
+        }
+        renderMenu(field);
+      })();
+      return;
     }
+
+    hideMenu();
+    hideBar();
   });
 
   // 送信のあと遷移した先で出す。読み込み直後に、預かっているものがないか聞く。

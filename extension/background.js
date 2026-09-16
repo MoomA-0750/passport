@@ -366,7 +366,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ロックしたとき。開いているページのメニューを閉じさせ、持っている候補を捨てさせる
   if (message.type === 'inline:locked') {
     // ロックしたら、預かっている平文も捨てる
-    Promise.all([clearAllPending(), notifyAllTabs()])
+    Promise.all([clearAllPending(), notifyAllTabs('locked')])
+      .then(() => sendResponse({ ok: true }), (err) => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  // ログインしたとき。開いているページが持っている「ロックされている」という
+  // 覚えを捨てさせる。これが無いと、ページを読み込み直すまで気づかない。
+  if (message.type === 'inline:unlocked') {
+    notifyAllTabs('unlocked')
       .then(() => sendResponse({ ok: true }), (err) => sendResponse({ error: err.message }));
     return true;
   }
@@ -383,9 +391,9 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   await takePending(tabId, { remove: true });
 });
 
-async function notifyAllTabs() {
+async function notifyAllTabs(reason) {
   const tabs = await chrome.tabs.query({});
   await Promise.all(tabs.map((tab) => (
-    chrome.tabs.sendMessage(tab.id, { type: 'inline:invalidate' }).catch(() => {})
+    chrome.tabs.sendMessage(tab.id, { type: 'inline:invalidate', reason }).catch(() => {})
   )));
 }
