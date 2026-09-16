@@ -9,6 +9,8 @@
     h1 { font-size: 1.1rem; margin: 0 0 1rem; }
     h2 { font-size: .9rem; margin: 1.5rem 0 .5rem; }
     .box { border: 1px solid var(--border); border-radius: .4rem; padding: .75rem; }
+    .toggle { display: flex; align-items: center; gap: .5rem; font-size: .9rem; color: var(--fg); margin-bottom: .5rem; }
+    .toggle input { width: auto; margin: 0; }
     code { background: rgba(127,127,127,.15); padding: 0 .2rem; border-radius: .2rem; }
     ol { padding-left: 1.2rem; }
     li { margin-bottom: .35rem; }
@@ -27,6 +29,22 @@
     <button class="button primary" type="submit">保存して接続を確かめる</button>
     <p id="message" class="hint" hidden></p>
   </form>
+
+  <h2>入力欄のそばのメニュー</h2>
+  <div class="box">
+    <label class="toggle">
+      <input id="inline-all" type="checkbox">
+      <span>すべてのサイトで出す</span>
+    </label>
+    <p class="hint small" style="margin-bottom:0">
+      入力欄を選んだときに候補のメニューを出します。これを入れると、拡張は
+      <strong>すべてのサイトで動けるようになります</strong>（Chrome の権限表示も
+      「すべてのサイトのデータの読み取りと変更」に変わります）。
+      サイトごとに許可したい場合は、ここを切ったまま、そのサイトを開いて
+      ツールバーの Passport アイコンから「有効にする」を押してください。
+    </p>
+    <p id="inline-status" class="hint small" style="margin-bottom:0"></p>
+  </div>
 
   <h2>この拡張の ID</h2>
   <div class="box">
@@ -48,7 +66,8 @@
   <h2>この拡張がしないこと</h2>
   <div class="box">
     <ul style="margin:0; padding-left:1.2rem">
-      <li>ページを開いただけでは何もしません。入力はボタンを押したときだけです</li>
+      <li>許可していないサイトでは、拡張はまったく動きません</li>
+      <li>メニューから選ぶか、ポップアップのボタンを押したときだけ入力します</li>
       <li>フォームを勝手に送信しません</li>
       <li>パスワードを拡張側に保存しません。保持するのはログイン用のトークンだけで、
           ブラウザを閉じると消えます</li>

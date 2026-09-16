@@ -20,6 +20,45 @@ getSettings().then((settings) => {
   input.value = settings.serverUrl || '';
 });
 
+// --- 入力欄のそばのメニュー ---------------------------------------------------
+
+const ALL_SITES = '<all_urls>';
+const inlineToggle = document.getElementById('inline-all');
+const inlineStatus = document.getElementById('inline-status');
+
+async function refreshInline() {
+  const granted = await chrome.permissions.contains({ origins: [ALL_SITES] });
+  inlineToggle.checked = granted;
+
+  const all = await chrome.permissions.getAll();
+  const sites = (all.origins || []).filter((o) => o !== ALL_SITES);
+  if (granted) {
+    inlineStatus.textContent = 'すべてのサイトで出ます。';
+  } else if (sites.length) {
+    inlineStatus.textContent = `個別に許可したサイト: ${sites.join(' , ')}`;
+  } else {
+    inlineStatus.textContent = 'いまは、どのサイトでも出ません。';
+  }
+}
+
+inlineToggle.addEventListener('change', async () => {
+  if (inlineToggle.checked) {
+    const granted = await chrome.permissions.request({ origins: [ALL_SITES] });
+    if (!granted) inlineToggle.checked = false;
+  } else {
+    await chrome.permissions.remove({ origins: [ALL_SITES] });
+  }
+  // 権限が変わったので、content script を登録し直してもらう
+  try {
+    await chrome.runtime.sendMessage({ type: 'inline:sync' });
+  } catch {
+    // service worker が寝ていても、permissions の変化で起きて同期される
+  }
+  await refreshInline();
+});
+
+refreshInline();
+
 document.getElementById('settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   show('');
@@ -50,6 +89,13 @@ document.getElementById('settings-form').addEventListener('submit', async (event
   }
 
   await saveSettings({ serverUrl: raw });
+
+  // 金庫の画面自体にはメニューを出さないので、登録し直してもらう
+  try {
+    await chrome.runtime.sendMessage({ type: 'inline:sync' });
+  } catch {
+    // 寝ていても次の機会に同期される
+  }
 
   // 実際に届くか確かめる。ログイン前でも /login は開くので、それで到達性を見る。
   try {

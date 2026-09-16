@@ -23,6 +23,10 @@
 
 * { box-sizing: border-box; }
 
+/* display を指定したクラス（.offer など）が [hidden] の既定スタイルに勝ってしまうので、
+   ここで押し返す。これが無いと hidden = true にしても表示されたままになる。 */
+[hidden] { display: none !important; }
+
 body {
   width: 22rem;
   margin: 0;
@@ -53,6 +57,7 @@ body {
   border-radius: .25rem;
 }
 .icon-button:hover { background: rgba(255, 255, 255, .15); }
+.icon-button.subtle:hover { background: rgba(127, 127, 127, .15); }
 
 section { padding: .75rem; }
 
@@ -93,14 +98,49 @@ input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 form .button.primary { width: 100%; margin-top: .3rem; }
 
-.site {
+.search-wrap { position: relative; margin-bottom: .6rem; }
+.search-wrap input { margin-bottom: 0; padding-right: 2rem; }
+.search-wrap .icon-button {
+  position: absolute; right: .25rem; top: 50%; transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: .5rem;
+  gap: .5rem;
+  margin: .1rem 0 .35rem;
 }
-.site-host { font-weight: 600; word-break: break-all; }
-.site-count { color: var(--muted); font-size: .78rem; flex: 0 0 auto; margin-left: .5rem; }
+.section-title {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.section-note {
+  color: var(--muted);
+  font-size: .76rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 入力欄のそばにメニューを出す許可のお誘い */
+.offer {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .6rem;
+  padding: .5rem .6rem;
+  border: 1px dashed var(--border);
+  border-radius: .35rem;
+}
+.offer-title { display: block; font-size: .8rem; }
+.offer-note { display: block; color: var(--muted); font-size: .72rem; }
+.offer .button { flex: 0 0 auto; }
 
 .items { list-style: none; margin: 0; padding: 0; max-height: 19rem; overflow-y: auto; }
 
@@ -111,6 +151,8 @@ form .button.primary { width: 100%; margin-top: .3rem; }
   padding: .45rem 0;
   border-top: 1px solid var(--border);
 }
+
+.item-icon { flex: 0 0 auto; font-size: 1.05rem; }
 .item:first-child { border-top: 0; }
 
 .item-info { min-width: 0; flex: 1 1 auto; }

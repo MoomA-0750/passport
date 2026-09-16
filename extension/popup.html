@@ -16,9 +16,7 @@
 
   <!-- サーバー未設定 -->
   <section id="view-setup" hidden>
-    <p class="hint">
-      まず Passport サーバーの場所を教えてください。
-    </p>
+    <p class="hint">まず Passport サーバーの場所を教えてください。</p>
     <button id="open-options" class="button primary" type="button">設定を開く</button>
   </section>
 
@@ -35,22 +33,47 @@
     <p class="hint small" id="server-label"></p>
   </section>
 
-  <!-- 一覧 -->
-  <section id="view-list" hidden>
-    <div class="site">
-      <span id="site-host" class="site-host">—</span>
-      <span id="site-count" class="site-count"></span>
+  <!-- 本体 -->
+  <section id="view-main" hidden>
+    <!-- 検索 -->
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="すべての金庫から探す" autocomplete="off">
+      <button id="clear-search" class="icon-button subtle" type="button" title="このページに戻る" hidden>×</button>
     </div>
 
-    <input id="search" type="search" placeholder="ほかを探す（タイトル・ユーザー名・URL）" autocomplete="off">
+    <!-- このページ -->
+    <div id="page-section">
+      <div class="section-head">
+        <span class="section-title">このページ</span>
+        <span id="site-host" class="section-note">—</span>
+      </div>
 
-    <ul id="items" class="items"></ul>
+      <ul id="page-items" class="items"></ul>
 
-    <p id="empty" class="hint" hidden>
-      このサイトに使えるものは見つかりませんでした。<br>
-      上の欄で探すか、金庫に URL を登録してください。
-    </p>
-    <p id="list-error" class="error" hidden></p>
+      <p id="page-empty" class="hint small" hidden></p>
+
+      <!-- インラインメニューの許可 -->
+      <div id="inline-offer" class="offer" hidden>
+        <div>
+          <strong class="offer-title">入力欄のそばにメニューを出す</strong>
+          <span class="offer-note">このサイトを開いたとき、入力欄を選ぶと候補が出るようになります</span>
+        </div>
+        <button id="enable-inline" class="button small primary" type="button">有効にする</button>
+      </div>
+      <p id="inline-on" class="hint small" hidden>✓ このサイトでは入力欄のそばにメニューが出ます</p>
+    </div>
+
+    <!-- 検索結果 -->
+    <div id="search-section" hidden>
+      <div class="section-head">
+        <span class="section-title">検索結果</span>
+        <span id="search-count" class="section-note"></span>
+      </div>
+      <ul id="search-items" class="items"></ul>
+      <p id="search-empty" class="hint small" hidden>見つかりませんでした</p>
+    </div>
+
+    <p id="main-error" class="error" hidden></p>
   </section>
 
   <footer class="foot">

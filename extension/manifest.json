@@ -11,9 +11,7 @@
     "storage"
   ],
   "optional_host_permissions": [
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "<all_urls>"
   ],
   "action": {
     "default_title": "Passport",
