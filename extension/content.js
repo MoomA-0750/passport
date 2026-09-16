@@ -618,6 +618,10 @@
     // 保存したら、このサイトの候補は取り直す
     candidates = null;
     candidatesAt = 0;
+    if (response.alreadySaved) {
+      showBarResult('すでに同じものが保存されていました');
+      return;
+    }
     showBarResult(response.updated ? '更新しました' : '保存しました');
   }
 

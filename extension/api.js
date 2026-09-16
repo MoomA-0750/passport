@@ -143,6 +143,11 @@ export const api = {
     }),
   totp: (vaultId, itemId) =>
     call(`/api/vaults/${vaultId}/items/${itemId}/totp`, { method: 'POST' }),
+  // 手元の値が保管してあるものと同じかを聞く。値は返ってこない
+  verify: (vaultId, itemId, field, value) =>
+    call(`/api/vaults/${vaultId}/items/${itemId}/verify`, {
+      method: 'POST', body: { field, value }
+    }),
   createItem: (vaultId, item) =>
     call(`/api/vaults/${vaultId}/items`, { method: 'POST', body: item }),
   updateItem: (vaultId, itemId, patch) =>

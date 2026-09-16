@@ -130,6 +130,38 @@ async function addIgnoredHost(host) {
   if (!hosts.includes(host)) await saveSettings({ ignoredHosts: [...hosts, host] });
 }
 
+// 同じユーザー名の登録を探す。大文字小文字は区別しない
+// （MoomA@example.local と mooma@example.local を別物として二重に登録しない）。
+function sameUsername(item, username) {
+  return String(item.username || '').toLowerCase() === String(username || '').toLowerCase();
+}
+
+// このログインが「もう登録済み」かどうかを調べる。
+//
+//   already   … ユーザー名もパスワードも同じものがある。何も聞かない
+//   outdated  … ユーザー名は同じだがパスワードが違う。更新を勧める
+//   unknown   … 同じユーザー名が無い。保存を勧める
+//
+// パスワードの照合はサーバー側でやってもらい、保管してある平文は受け取らない。
+async function classifyLogin(host, entry) {
+  const { items } = await api.match(host);
+  const sameUser = items.filter((item) => sameUsername(item, entry.username));
+  if (sameUser.length === 0) return { state: 'unknown', item: null };
+
+  for (const item of sameUser) {
+    if (!item.secrets || !item.secrets.password) continue;
+    try {
+      const { matches } = await api.verify(item.vaultId, item.id, 'password', entry.password);
+      if (matches) return { state: 'already', item };
+    } catch (err) {
+      // 照合できなかったものは「違う」とみなして先へ進む。
+      // ここで諦めると、更新の機会まで失う。
+      if (err instanceof ApiError && err.status === 401) throw err;
+    }
+  }
+  return { state: 'outdated', item: sameUser[0] };
+}
+
 // --- content script からの問い合わせ -----------------------------------------
 
 // どのサイトの候補を返すかは、content script の言い分ではなく sender から決める。
@@ -217,17 +249,24 @@ async function handleMessage(message, sender) {
       if (entry.host !== host) return { offer: null };
 
       let vaults = [];
-      let existing = null;
+      let classified = null;
       try {
+        classified = await classifyLogin(host, entry);
         const vaultList = await api.vaults();
         // 書き込める Vault だけを選べるようにする
         vaults = vaultList.vaults.filter((v) => ['editor', 'owner'].includes(v.role));
-        const { items } = await api.match(host);
-        existing = items.find((item) => (item.username || '') === entry.username) || null;
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) return { offer: null, locked: true };
         throw err;
       }
+
+      // もう同じものが入っているなら何も聞かない。預かっていた平文もここで捨てる。
+      if (classified.state === 'already') {
+        await takePending(sender.tab.id, { remove: true });
+        return { offer: null, alreadySaved: true };
+      }
+
+      const existing = classified.state === 'outdated' ? classified.item : null;
       if (vaults.length === 0 && !existing) return { offer: null };
 
       return {
@@ -261,8 +300,20 @@ async function handleMessage(message, sender) {
       if (!entry) return { error: '預かっていた内容が期限切れです。もう一度ログインしてください' };
       if (entry.host !== host) return { error: 'このページでは保存できません' };
 
-      const { items } = await api.match(host);
-      const existing = items.find((item) => (item.username || '') === entry.username) || null;
+      let classified;
+      try {
+        classified = await classifyLogin(host, entry);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) return { error: 'Passport がロックされています' };
+        throw err;
+      }
+
+      // 決めるまでの間に、ほかの経路で同じものが入ったかもしれない
+      if (classified.state === 'already') {
+        await takePending(sender.tab.id, { remove: true });
+        return { ok: true, alreadySaved: true };
+      }
+      const existing = classified.state === 'outdated' ? classified.item : null;
 
       try {
         if (existing) {

@@ -273,6 +273,52 @@ test('共有: Vault に入れた人は同じ秘密を復号できる', () => {
   assert.strictEqual(asMember, 'shared-secret-value');
 });
 
+test('照合: 値を返さずに、合っているかだけを答える', () => {
+  const item = items.create(vault.id, {
+    title: '照合の確認', secrets: { password: 'the-stored-password' }
+  }, { actor: admin.id });
+
+  assert.strictEqual(
+    items.verifySecret(vault.id, item.id, 'password', 'the-stored-password', { actor: admin.id }),
+    true
+  );
+  assert.strictEqual(
+    items.verifySecret(vault.id, item.id, 'password', 'the-stored-passworD', { actor: admin.id }),
+    false
+  );
+  // 長さが違っても落ちない
+  assert.strictEqual(
+    items.verifySecret(vault.id, item.id, 'password', '', { actor: admin.id }),
+    false
+  );
+  assert.strictEqual(
+    items.verifySecret(vault.id, item.id, 'password', 'x'.repeat(500), { actor: admin.id }),
+    false
+  );
+  // 無いフィールドは false（例外にしない）
+  assert.strictEqual(
+    items.verifySecret(vault.id, item.id, 'totp', 'anything', { actor: admin.id }),
+    false
+  );
+});
+
+test('照合: 権限のない人はできない', () => {
+  const item = items.list(vault.id, admin.id).find((i) => i.title === '照合の確認');
+  assert.throws(
+    () => items.verifySecret(vault.id, item.id, 'password', 'the-stored-password', { actor: outsider.id }),
+    (e) => e.code === 'FORBIDDEN'
+  );
+});
+
+test('照合: 閲覧とは別の種別で監査ログに残り、値は載らない', () => {
+  const audit = require('../lib/audit');
+  const entries = audit.recent({ limit: 500 }).filter((e) => e.event === 'item.verify_secret');
+  assert.ok(entries.length >= 2, `記録が ${entries.length} 件`);
+  assert.ok(entries.some((e) => e.result === 'match'));
+  assert.ok(entries.some((e) => e.result === 'differs'));
+  assert.ok(!JSON.stringify(entries).includes('the-stored-password'));
+});
+
 test('検索: 自分が入っている Vault だけが対象になる', () => {
   const mine = items.search(member.id, 'vSphere');
   assert.ok(mine.length > 0);
