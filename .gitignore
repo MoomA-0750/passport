@@ -2,6 +2,10 @@
 data/
 backups/
 
+# 手元で動かすとき用のデータと鍵（開発機のみ）
+_local_data/
+_local_keys/
+
 # 鍵とTLS証明書（絶対にコミットしない）
 *.key
 *.pem
