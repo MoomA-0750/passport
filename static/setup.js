@@ -9,6 +9,7 @@ document.getElementById('setup-form').addEventListener('submit', async (event) =
   event.preventDefault();
   showError('error', null);
 
+  const setupToken = document.getElementById('setupToken').value.trim();
   const username = document.getElementById('username').value.trim().toLowerCase();
   const displayName = document.getElementById('displayName').value.trim();
   const password = document.getElementById('password').value;
@@ -24,7 +25,7 @@ document.getElementById('setup-form').addEventListener('submit', async (event) =
   button.textContent = '作成中…';
 
   try {
-    await apiFetch('/api/setup', { method: 'POST', body: { username, password, displayName } });
+    await apiFetch('/api/setup', { method: 'POST', body: { username, password, displayName, setupToken } });
     // 作ったらそのままログインさせる
     await apiFetch('/api/login', { method: 'POST', body: { username, password } });
     window.location.href = '/';

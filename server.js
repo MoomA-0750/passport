@@ -18,6 +18,7 @@ const audit = require('./lib/audit');
 const http = require('./lib/http');
 const template = require('./lib/template');
 const api = require('./lib/api');
+const integrity = require('./lib/integrity');
 
 const STATIC_DIR = path.join(__dirname, 'static');
 
@@ -76,7 +77,9 @@ function handlePage(req, res, ctx) {
   const { pathname } = ctx.url;
 
   // ユーザーが1人も居ないうちは、必ずセットアップ画面へ送る
-  const needsSetup = users.count() === 0;
+  // 「読めたユーザーが0人」ではなく「ディスク上にユーザーも Vault も無い」で判断する。
+  // 読めないファイルを0人と数えると、事故でセットアップ画面が復活してしまう。
+  const needsSetup = integrity.setupAllowed();
   if (needsSetup && pathname !== '/setup') {
     http.redirect(req, res, '/setup');
     return;
@@ -275,6 +278,17 @@ function start() {
   keyring.selfTest();
   log.info('暗号の自己テスト: OK');
 
+  // データの状態と、マスターキーの世代を確かめる。おかしければここで止める。
+  try {
+    integrity.checkOnStartup();
+  } catch (err) {
+    if (err instanceof integrity.IntegrityError) {
+      log.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+
   if (!config.server.tls && !config.server.trustProxy) {
     log.warn('TLS が無効で、リバースプロキシも想定していません。');
     log.warn('この状態ではパスワードが平文でネットワークを流れます。社内でも HTTPS を用意してください。');
@@ -290,8 +304,11 @@ function start() {
   server.listen(config.server.port, config.server.host, () => {
     const scheme = config.server.tls ? 'https' : 'http';
     log.info(`待ち受け: ${scheme}://${config.server.host}:${config.server.port}`);
-    if (users.count() === 0) {
+    if (integrity.setupAllowed()) {
+      const token = integrity.issueSetupToken();
       log.info('まだユーザーが居ません。ブラウザで開いて最初の管理者を作ってください。');
+      log.info(`セットアップの合言葉: ${token}`);
+      log.info('（この合言葉はサーバーを起動し直すと変わります。一度使うと無効になります）');
     }
     audit.record('server.start', { note: `${scheme}://${config.server.host}:${config.server.port}` });
   });
