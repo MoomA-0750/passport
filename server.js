@@ -268,14 +268,32 @@ async function handleRequest(req, res) {
           ? { ok: true }
           : session.checkCsrf(req, current, req.headers['x-csrf-token'], { requireToken: !isPreAuth });
         if (!csrfResult.ok) {
-          log.warn(`CSRF 検証で弾きました: ${parsed.pathname}: ${csrfResult.reason}`);
-          audit.record('access.denied', {
+          // 認証なしで叩けるので、ログも監査ログも接続元ごとに間引く
+          const logged = audit.recordSampled(`csrf|${ctx.ip}|${user ? user.id : '-'}`, 'access.denied', {
             actor: user && user.id, ip: ctx.ip, note: `CSRF: ${csrfResult.reason}`
           });
+          if (logged !== 'suppressed') log.warn(`CSRF 検証で弾きました: ${parsed.pathname}: ${csrfResult.reason}`);
           http.sendJson(req, res, 403, { error: 'リクエストを検証できませんでした。画面を再読み込みしてやり直してください' });
           done();
           return;
         }
+      }
+      // 本文を待っている間に、トークンの失効・セッションの切断・無効化・権限の変更が起きていたら、ここで止める。
+      // 認証を済ませてから本文を送らずに待ち、失効後に送り切る、という読み出しをさせない
+      if (automation && !tokens.stillUsable(automation.id)) {
+        http.sendJson(req, res, 401, { error: 'トークンが使えません（期限切れ・失効・権限の変更など）' });
+        done();
+        return;
+      }
+      if (current) {
+        const fresh = session.get(sessionId);
+        const freshUser = fresh ? users.get(fresh.userId) : null;
+        if (!fresh || !freshUser || freshUser.status !== 'active') {
+          http.sendJson(req, res, 401, { error: 'ログインしてください' }, http.corsHeaders(req));
+          done();
+          return;
+        }
+        ctx.user = users.toPublic(freshUser); // 待っている間に権限（admin など）が変わっていても、今の値で判定する
       }
       await api.handle(ctx);
       done();

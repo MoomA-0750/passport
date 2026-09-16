@@ -73,7 +73,7 @@ try {
     const keyring = require(${JSON.stringify(path.resolve(__dirname, '../lib/keyring'))});
     const integrity = require(${JSON.stringify(path.resolve(__dirname, '../lib/integrity'))});
     const vaults = require(${JSON.stringify(path.resolve(__dirname, '../lib/vaults'))});
-    const result = { vaults: 0, vaultsOpened: 0, items: 0, brokenItems: 0 };
+    const result = { vaults: 0, vaultsOpened: 0, items: 0, brokenItems: 0, groups: 0, tokens: 0, brokenOther: [], missingGroups: [] };
     try {
       store.init();
       keyring.unlock();
@@ -90,6 +90,24 @@ try {
             try { JSON.parse(fs.readFileSync(dir + '/' + name, 'utf8')); } catch { result.brokenItems += 1; }
           }
         }
+      }
+      // グループと自動化トークンも、JSON として読めるかを確かめる（壊れていると、グループ経由の人が黙って入れなくなり、
+      // cron が 401 になる）。Vault が参照しているグループが無いことも知らせる
+      const fs2 = require('fs');
+      const groupIds = new Set();
+      for (const kind of ['groups', 'tokens']) {
+        const dir = store.resolveInData(kind);
+        if (!fs2.existsSync(dir)) continue;
+        for (const name of fs2.readdirSync(dir).filter((n) => n.endsWith('.json') && !n.includes('.tmp-'))) {
+          result[kind] += 1;
+          try {
+            const record = JSON.parse(fs2.readFileSync(dir + '/' + name, 'utf8'));
+            if (kind === 'groups') groupIds.add(record.id);
+          } catch { result.brokenOther.push(kind + '/' + name); }
+        }
+      }
+      for (const vault of vaults.list()) {
+        for (const g of (vault.groups || [])) if (!groupIds.has(g.groupId)) result.missingGroups.push(vault.name + ' → ' + g.groupId);
       }
       console.log(JSON.stringify({ ok: true, ...result }));
     } catch (err) {
@@ -111,8 +129,11 @@ try {
   console.log(`✓ マスターキーの世代が一致`);
   console.log(`✓ Vault ${result.vaultsOpened} / ${result.vaults} 個の鍵を開けられた`);
   console.log(`✓ アイテム ${result.items} 件（壊れた JSON ${result.brokenItems} 件）`);
+  console.log(`✓ グループ ${result.groups} 件 / 自動化トークン ${result.tokens} 件`);
+  for (const broken of result.brokenOther) console.error(`✗ 壊れた JSON: ${broken}`);
+  for (const missing of result.missingGroups) console.error(`✗ Vault が参照しているグループがありません: ${missing}`);
 
-  if (result.vaultsOpened !== result.vaults || result.brokenItems > 0) {
+  if (result.vaultsOpened !== result.vaults || result.brokenItems > 0 || result.brokenOther.length > 0 || result.missingGroups.length > 0) {
     console.error('');
     console.error('✗ 一部を開けませんでした。戻す前に原因を確かめてください');
     process.exit(1);

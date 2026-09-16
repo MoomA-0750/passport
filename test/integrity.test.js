@@ -183,8 +183,9 @@ test('照合: pepper が無いまま黙ってハッシュを作らない', () =>
 test('監査ログ: 存在しないユーザー名で打ち込まれた文字列を、そのまま残さない', () => {
   // ユーザー名の欄にパスワードを打ち間違えた状況
   const mistyped = 'MyRealPassword-typed-into-username!';
-  users.authenticate(mistyped, 'whatever');
-  users.authenticate(mistyped, 'whatever-again');
+  // 同じ接続元からの同じ記録は1分に1行に間引くので、接続元を変えて2回
+  users.authenticate(mistyped, 'whatever', { ip: '192.0.2.1' });
+  users.authenticate(mistyped, 'whatever-again', { ip: '192.0.2.2' });
 
   const entries = audit.recent({ limit: 50 }).filter((e) => e.event === 'login.fail' && e.result === 'no_such_user');
   assert.ok(entries.length >= 2);

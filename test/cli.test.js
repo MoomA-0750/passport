@@ -227,16 +227,16 @@ let tokenId;
 test('トークン: 期限は必須で最長 365 日。owner でない Vault は対象にできない', async () => {
   ownerBrowser = browser();
   await ownerBrowser.login('owner', 'owner-password-123');
-  const noExpiry = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops] } });
+  const noExpiry = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops], password: 'owner-password-123' } });
   assert.strictEqual(noExpiry.status, 400);
-  const tooLong = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops], expiresInDays: 366 } });
+  const tooLong = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops], expiresInDays: 366, password: 'owner-password-123' } });
   assert.strictEqual(tooLong.status, 400);
-  const notOwner = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops, seed.theirs], expiresInDays: 30 } });
+  const notOwner = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops, seed.theirs], expiresInDays: 30, password: 'owner-password-123' } });
   assert.strictEqual(notOwner.status, 403);
 });
 
 test('トークン: 発行すると一度だけトークンが返り、サーバーには秘密が残らない', async () => {
-  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '夜間バックアップ', vaultIds: [seed.ops], expiresInDays: 30 } });
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '夜間バックアップ', vaultIds: [seed.ops], expiresInDays: 30, password: 'owner-password-123' } });
   assert.strictEqual(r.status, 200, r.text);
   token = r.json.token;
   tokenId = r.json.info.id;
@@ -323,7 +323,7 @@ test('トークン: 発行者が owner でなくなると使えない（戻れ�
 });
 
 test('トークン: 期限を過ぎると使えない', async () => {
-  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '短命', vaultIds: [seed.ops], expiresInDays: 1 } });
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '短命', vaultIds: [seed.ops], expiresInDays: 1, password: 'owner-password-123' } });
   const file = path.join(DATA, 'tokens', `${r.json.info.id}.json`);
   const t = JSON.parse(fs.readFileSync(file, 'utf8'));
   t.expiresAt = new Date(Date.now() - 1000).toISOString();
@@ -340,7 +340,7 @@ test('トークン: 失効させると使えない', async () => {
 });
 
 test('トークン: 発行者が無効化されると使えない', async () => {
-  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '無効化の確認', vaultIds: [seed.ops], expiresInDays: 7 } });
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '無効化の確認', vaultIds: [seed.ops], expiresInDays: 7, password: 'owner-password-123' } });
   assert.strictEqual((await bearer(r.json.token, '/api/automation/vaults')).status, 200);
   const file = path.join(DATA, 'users', `${seed.ownerId}.json`);
   const original = fs.readFileSync(file, 'utf8');
@@ -368,7 +368,7 @@ function rawRequest(method, rawPath, headers = {}) {
 let liveToken;
 
 test('トークン: パスの書き方を変えても /api/automation/ の外には届かない', async () => {
-  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'パスの確認', vaultIds: [seed.ops], expiresInDays: 7 } });
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'パスの確認', vaultIds: [seed.ops], expiresInDays: 7, password: 'owner-password-123' } });
   liveToken = r.json.token;
   const auth = { Authorization: `Bearer ${liveToken}` };
   for (const p of ['/api/automation/../vaults', '/api/automation/%2e%2e/vaults', '/api/automation/..%2fvaults', '/api/automation\\..\\vaults', '//api/vaults', '/api/automation/../../api/tokens']) {
@@ -423,7 +423,7 @@ test('トークン: 複数 Vault のトークンは、片方の owner には入�
   try {
     const other = browser();
     await other.login('other', 'other-password-123');
-    const made = await other.call('/api/tokens', { method: 'POST', body: { name: '二つの金庫', vaultIds: [seed.ops, seed.theirs], expiresInDays: 7 } });
+    const made = await other.call('/api/tokens', { method: 'POST', body: { name: '二つの金庫', vaultIds: [seed.ops, seed.theirs], expiresInDays: 7, password: 'other-password-123' } });
     assert.strictEqual(made.status, 200, made.text);
     await bearer(made.json.token, '/api/automation/vaults');
 
@@ -465,7 +465,7 @@ test('トークン: 緊急アクセスで owner になった Vault を対象に�
   // owner（admin）が other の「よそ」に緊急アクセスする
   const bg = await ownerBrowser.call(`/api/vaults/${seed.theirs}/break-glass`, { method: 'POST', body: { reason: 'トークンの確認のため' } });
   assert.strictEqual(bg.status, 200, bg.text);
-  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '緊急', vaultIds: [seed.theirs], expiresInDays: 7 } });
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '緊急', vaultIds: [seed.theirs], expiresInDays: 7, password: 'owner-password-123' } });
   assert.strictEqual(r.status, 400);
   assert.match(r.json.error, /緊急アクセス/);
 });
@@ -515,7 +515,7 @@ test('ssh-agent: 準備（鍵を2本預け、片方はパスフレーズ付き�
     const r = await ownerBrowser.call(`/api/vaults/${seed.ops}/items`, { method: 'POST', body: { type: 'sshkey', title, secrets } });
     assert.strictEqual(r.status, 200, r.text);
   }
-  const t = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'SSH エージェント', vaultIds: [seed.ops], expiresInDays: 1 } });
+  const t = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'SSH エージェント', vaultIds: [seed.ops], expiresInDays: 1, password: 'owner-password-123' } });
   agentToken = t.json.token;
 });
 
@@ -615,4 +615,108 @@ test('ssh-agent: --socket に数字だけを渡すと、今のディレクトリ
   assert.ok(fs.statSync(path.join(workdir, '8932')).isSocket());
   await exited;
   fs.rmSync(workdir, { recursive: true, force: true });
+});
+
+// --- outer gate で足したもの ------------------------------------------------------
+
+test('トークン: 発行にはパスワードの確認が要る（盗んだセッションだけでは長寿命の入口を作れない）', async () => {
+  const noPass = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops], expiresInDays: 7 } });
+  assert.strictEqual(noPass.status, 403);
+  const wrong = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'x', vaultIds: [seed.ops], expiresInDays: 7, password: 'not-my-password' } });
+  assert.strictEqual(wrong.status, 403);
+});
+
+test('トークン: パスワードを変える・無効化する・管理者がリセットすると、その人が発行したトークンは失効し、戻しても復活しない', async () => {
+  // other に「よそ」のトークンを発行させる
+  const other = browser();
+  await other.login('other', 'other-password-123');
+  const issue = async () => (await other.call('/api/tokens', { method: 'POST', body: { name: '回復の確認', vaultIds: [seed.theirs], expiresInDays: 7, password: 'other-password-123' } })).json.token;
+
+  // 1. 管理者が無効化 → 有効化
+  const t1 = await issue();
+  assert.strictEqual((await bearer(t1, '/api/automation/vaults')).status, 200);
+  await ownerBrowser.call(`/api/users/${seed.otherId}`, { method: 'PUT', body: { status: 'disabled' } });
+  await ownerBrowser.call(`/api/users/${seed.otherId}`, { method: 'PUT', body: { status: 'active' } });
+  assert.strictEqual((await bearer(t1, '/api/automation/vaults')).status, 401, '有効化でトークンが復活した');
+
+  // 2. 管理者のパスワードリセット
+  await other.login('other', 'other-password-123');
+  const t2 = await issue();
+  await ownerBrowser.call(`/api/users/${seed.otherId}/password`, { method: 'POST', body: { newPassword: 'reset-password-456' } });
+  assert.strictEqual((await bearer(t2, '/api/automation/vaults')).status, 401);
+
+  // 3. 本人のパスワード変更
+  const again = browser();
+  await again.login('other', 'reset-password-456');
+  const t3 = (await again.call('/api/tokens', { method: 'POST', body: { name: '回復の確認', vaultIds: [seed.theirs], expiresInDays: 7, password: 'reset-password-456' } })).json.token;
+  assert.strictEqual((await bearer(t3, '/api/automation/vaults')).status, 200);
+  await again.call('/api/me/password', { method: 'POST', body: { currentPassword: 'reset-password-456', newPassword: 'other-password-123' } });
+  assert.strictEqual((await bearer(t3, '/api/automation/vaults')).status, 401);
+});
+
+test('トークン: 認証を済ませて本文を待っている間に失効したら、本文を送り切っても読めない', async () => {
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: '待ち伏せ', vaultIds: [seed.ops], expiresInDays: 7, password: 'owner-password-123' } });
+  const token = r.json.token;
+  const body = JSON.stringify({ field: 'password' });
+  const u = new URL(BASE);
+  const response = new Promise((resolve) => {
+    const req = require('http').request({
+      method: 'POST', hostname: u.hostname, port: u.port, path: `/api/automation/vaults/${seed.ops}/items/${seed.db}/read`,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, (res) => {
+      let text = '';
+      res.on('data', (d) => { text += d; });
+      res.on('end', () => resolve({ status: res.statusCode, text }));
+    });
+    req.write(body.slice(0, 5));
+    // 本文の途中で止めている間に失効させる
+    setTimeout(async () => {
+      await ownerBrowser.call(`/api/tokens/${r.json.info.id}`, { method: 'DELETE' });
+      req.end(body.slice(5));
+    }, 300);
+  });
+  const res = await response;
+  assert.strictEqual(res.status, 401, res.text);
+  assert.ok(!res.text.includes('db-pass-VALUE-1'));
+});
+
+test('拡張のセッションでは読み出し API を使えない', async () => {
+  const r = await fetch(`${BASE}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'chrome-extension://iookbapfomcndnncbdohnhblclbhmfoc' },
+    body: JSON.stringify({ username: 'owner', password: 'owner-password-123' })
+  });
+  const { token } = await r.json();
+  assert.ok(token);
+  assert.strictEqual((await bearer(token, '/api/automation/vaults')).status, 401);
+});
+
+test('CSRF で弾いた記録は、接続元ごとに1分に1行に間引かれる（認証なしで監査ログを埋めさせない）', async () => {
+  const count = () => auditEntries().filter((e) => e.event === 'access.denied' && e.ip === '198.51.100.77').length;
+  const before = count();
+  for (let i = 0; i < 40; i += 1) {
+    await fetch(`${BASE}/api/logout`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.77' }, body: '{}' });
+  }
+  assert.ok(count() - before <= 1, `${count() - before} 行書かれた`);
+});
+
+test('CLI: PASSPORT_TOKEN_FILE でトークンを渡せる。ほかの人から読めるファイルは使わない', async () => {
+  const r = await ownerBrowser.call('/api/tokens', { method: 'POST', body: { name: 'ファイル', vaultIds: [seed.ops], expiresInDays: 7, password: 'owner-password-123' } });
+  const file = path.join(TMP, 'token.txt');
+  fs.writeFileSync(file, `${r.json.token}\n`, { mode: 0o600 });
+  const ok = cli(['read', '運用/本番 DB', '--url', BASE], { env: { PASSPORT_TOKEN_FILE: file } });
+  assert.strictEqual(ok.out, 'db-pass-VALUE-1', ok.err);
+  fs.chmodSync(file, 0o644);
+  const loose = cli(['read', '運用/本番 DB', '--url', BASE], { env: { PASSPORT_TOKEN_FILE: file } });
+  assert.strictEqual(loose.code, 2);
+  assert.match(loose.err, /chmod 600/);
+});
+
+test('CLI: 端末でないときは --user が要り、空のパスワードはサーバーへ送らない', () => {
+  const noUser = cli(['login', '--url', BASE], { input: 'owner\nowner-password-123\n' });
+  assert.strictEqual(noUser.code, 2);
+  const failsBefore = auditEntries().filter((e) => e.event === 'login.fail').length;
+  const empty = cli(['login', '--url', BASE, '--user', 'owner'], { input: '' });
+  assert.strictEqual(empty.code, 2);
+  assert.strictEqual(auditEntries().filter((e) => e.event === 'login.fail').length, failsBefore);
 });

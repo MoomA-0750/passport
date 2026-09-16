@@ -33,6 +33,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# どちらも .gitignore に入っていてリポジトリには無いので、先に作っておく（無いと起動に失敗する）:
+#   install -d -o passport -g passport -m 700 /opt/passport/data /opt/passport/backups
 ReadWritePaths=/opt/passport/data /opt/passport/backups
 ReadOnlyPaths=/etc/passport
 UMask=0077

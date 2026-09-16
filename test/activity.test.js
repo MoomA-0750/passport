@@ -182,3 +182,17 @@ test('端末: 最後の操作の時刻と接続元が更新される', () => {
     session.destroyAllForUser(owner.id);
   }
 });
+
+test('履歴: Vault から外されたあとは、その Vault の記録の備考（アイテム名など）も出さない', () => {
+  vaults.removeMember(ownedVault.id, { userId: editor.id, actor: owner.id });
+  const mine = activity.forUser(editor.id).filter((e) => e.event === 'item.view_secret');
+  const fromOwned = mine.filter((e) => e.note && e.note.includes('持っている鍵'));
+  assert.deepStrictEqual(fromOwned, []);
+});
+
+test('強さの判定: とても長い値でも時間がかからない（点検でサーバーを止めない）', () => {
+  const strength = require('../lib/strength');
+  const started = Date.now();
+  strength.weaknesses(`${'1'.repeat(250000)}a`);
+  assert.ok(Date.now() - started < 500, `${Date.now() - started}ms かかった`);
+});

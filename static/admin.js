@@ -167,7 +167,7 @@ function renderAudit() {
       </td>
       <td>${escapeHtml(entry.actorName || '—')}<br><span class="text-muted">${escapeHtml(entry.ip || '')}</span></td>
       <td class="font-monospace text-muted">${escapeHtml((entry.itemId || entry.vaultId || entry.target || '').slice(0, 8))}</td>
-      <td>${escapeHtml(entry.note || '')}</td>
+      <td>${escapeHtml(entry.note || '')}${entry.suppressed ? `<span class="badge bg-light text-dark border ms-1" title="同じ記録を間引いた数">ほか ${Number(entry.suppressed)} 件</span>` : ''}</td>
     </tr>
   `).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">記録がありません</td></tr>';
 }

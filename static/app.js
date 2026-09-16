@@ -937,11 +937,13 @@ async function renderSessions() {
 }
 
 let activityEntries = [];
+let activityTruncated = false;
 const RELATION_LABELS = { self: '自分', account: 'アカウント', vault: 'owner の Vault' };
 
 async function renderActivity() {
-  const { entries } = await apiFetch('/api/me/activity?limit=300');
+  const { entries, truncated } = await apiFetch('/api/me/activity?limit=300');
   activityEntries = entries;
+  activityTruncated = truncated;
   drawActivity();
 }
 
@@ -963,6 +965,10 @@ function drawActivity() {
       <td>${escapeHtml(e.note || '')}</td>
     </tr>
   `).join('') : '<tr><td colspan="5" class="text-center text-muted py-4">記録がありません</td></tr>';
+  if (activityTruncated) {
+    document.getElementById('activity-tbody').insertAdjacentHTML('beforeend',
+      '<tr><td colspan="5" class="text-center text-muted small">これより古い記録は読み切れませんでした。必要なら管理者に監査ログを見てもらってください</td></tr>');
+  }
 }
 
 // --- ゴミ箱 -----------------------------------------------------------------
@@ -1422,7 +1428,8 @@ function wire() {
         body: {
           name: document.getElementById('token-name').value.trim(),
           vaultIds,
-          expiresInDays: Number(document.getElementById('token-days').value)
+          expiresInDays: Number(document.getElementById('token-days').value),
+          password: document.getElementById('token-password').value
         }
       });
       document.getElementById('token-value').value = token;

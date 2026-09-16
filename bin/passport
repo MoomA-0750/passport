@@ -16,7 +16,8 @@
 // 認証は2通り:
 //   ・人: passport login で対話ログイン。サーバーのセッション（既定8時間、最長24時間）を
 //         ~/.config/passport/session.json に 0600 で保存する
-//   ・自動化: 環境変数 PASSPORT_TOKEN に自動化トークン（pp_...）を入れる。ファイルには保存しない
+//   ・自動化: 自動化トークン（pp_...）を PASSPORT_TOKEN_FILE（0600 のファイル。勧める）か PASSPORT_TOKEN で渡す。
+//     コマンドラインに直接書くとシェルの履歴に残るので、ファイルで渡す
 //
 // 接続先と証明書: --url / --ca、環境変数 PASSPORT_URL / PASSPORT_CA、または ~/.config/passport/config.json。
 // 自己署名の証明書は --ca で CA（または証明書そのもの）のファイルを渡す。検証を切る手段は用意しない。
@@ -126,7 +127,7 @@ function resolveTarget(options) {
     }
     process.stderr.write('警告: http で接続します。パスワードとトークンが平文でネットワークを流れます\n');
   }
-  return { url: parsed.origin, ca };
+  return { url: parsed.origin, ca, hostname: parsed.hostname.replace(/^\[|\]$/g, '') };
 }
 
 // --- HTTP --------------------------------------------------------------------
@@ -137,7 +138,7 @@ function request(target, method, pathname, { body, bearer, headers = {} } = {}) 
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
   const options = {
     method,
-    hostname: base.hostname,
+    hostname: base.hostname.replace(/^\[|\]$/g, ''), // IPv6 の [::1] は角かっこを外して渡す
     port: base.port || (base.protocol === 'https:' ? 443 : 80),
     path: pathname,
     headers: {
@@ -202,15 +203,29 @@ async function api(ctx, method, pathname, body) {
 
 // --- 認証情報 -----------------------------------------------------------------
 
+function tokenFromFile() {
+  const file = process.env.PASSPORT_TOKEN_FILE;
+  if (!file) return null;
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    throw new CliError(`PASSPORT_TOKEN_FILE のファイルがありません: ${file}`, EXIT.usage);
+  }
+  if (stat.mode & 0o077) {
+    throw new CliError(`${file} がほかの人から読める権限になっています（${(stat.mode & 0o777).toString(8)}）。chmod 600 にしてください`, EXIT.usage);
+  }
+  return fs.readFileSync(file, 'utf8').trim();
+}
+
 function loadCredential(options) {
-  if (process.env.PASSPORT_TOKEN) {
-    return { kind: 'token', bearer: process.env.PASSPORT_TOKEN.trim(), target: resolveTarget(options) };
+  const token = tokenFromFile() || (process.env.PASSPORT_TOKEN ? process.env.PASSPORT_TOKEN.trim() : null);
+  if (token) {
+    return { kind: 'token', bearer: token, target: resolveTarget(options) };
   }
   const saved = readPrivateJson(sessionFile());
   if (!saved || !saved.token) throw new CliError('ログインしていません。passport login でログインしてください', EXIT.auth);
-  if (saved.expiresAt && Date.parse(saved.expiresAt) <= Date.now()) {
-    throw new CliError('ログインが切れています。passport login でログインし直してください', EXIT.auth);
-  }
+  // 期限は手元では判断しない。サーバーは操作のたびに延ばす（最長 24 時間）ので、切れていれば 401 で分かる
   const target = resolveTarget({ ...options, url: options.url || saved.url });
   return { kind: 'user', bearer: saved.token, target };
 }
@@ -332,7 +347,14 @@ function evalLines(socketPath, pid) {
 // 読める Vault から SSH 鍵を集める。取り出しはサーバーの監査ログに鍵ごとに残る。
 // --vault を渡すと、その Vault の鍵だけを持ってくる（取り出す本数がそのまま端末への露出範囲になるため）
 async function collectSshKeys(ctx, log, { vaultNames = [] } = {}) {
-  const sshagent = require(path.join(__dirname, '..', 'lib', 'sshagent'));
+  let sshagent;
+  try {
+    sshagent = require(path.join(__dirname, '..', 'lib', 'sshagent'));
+  } catch (err) {
+    if (err.code !== 'MODULE_NOT_FOUND') throw err;
+    throw new CliError('SSH エージェントには bin/passport と一緒に lib/sshagent.js と lib/sshkeys.js が要ります'
+      + '（リポジトリと同じ bin/ と lib/ の並びで置いてください）', EXIT.usage);
+  }
   const loaded = [];
   const skipped = [];
   const { vaults: all } = await api(ctx, 'GET', '/api/automation/vaults');
@@ -540,12 +562,18 @@ function killAgent() {
 
 const commands = {
   async login(args, options) {
-    if (process.env.PASSPORT_TOKEN) {
-      throw new CliError('PASSPORT_TOKEN が設定されています。人としてログインするなら外してください', EXIT.usage);
+    if (process.env.PASSPORT_TOKEN || process.env.PASSPORT_TOKEN_FILE) {
+      throw new CliError('PASSPORT_TOKEN / PASSPORT_TOKEN_FILE が設定されています。人としてログインするなら外してください', EXIT.usage);
     }
     const target = resolveTarget(options);
+    // 端末でないときは、ユーザー名を --user で渡してもらう（標準入力はパスワードだけに使う）
+    if (!options.user && !process.stdin.isTTY) {
+      throw new CliError('端末でないときは --user でユーザー名を渡してください（パスワードは標準入力から読みます）', EXIT.usage);
+    }
     const username = options.user || await prompt('ユーザー名: ');
     const password = await prompt('パスワード: ', { hidden: true });
+    // 空のパスワードをサーバーへ送らない（ログイン失敗として数えられ、接続元が止められてしまう）
+    if (!password) throw new CliError('パスワードが空です', EXIT.usage);
     const res = await request(target, 'POST', '/api/login', { body: { username, password } });
     if (res.status !== 200 || !res.json || !res.json.token) {
       throw new CliError((res.json && res.json.error) || `ログインできませんでした（${res.status}）`, EXIT.auth);
@@ -558,7 +586,7 @@ const commands = {
       url: target.url,
       username: res.json.user.username,
       token: res.json.token,
-      expiresAt: new Date(Date.now() + (res.json.expiresInSeconds || 8 * 3600) * 1000).toISOString()
+      loggedInAt: new Date().toISOString()
     });
     process.stderr.write(`${res.json.user.username} としてログインしました\n`);
   },
@@ -651,7 +679,7 @@ const HELP = `使い方:
       --vault で持ってくる Vault を絞る（カンマ区切り）。--socket でソケットの場所を決める
 
   名前に / を含むときは --vault / --item / --field で渡す。名前の代わりに ID も使える。
-  自動化では PASSPORT_TOKEN に自動化トークンを入れる（ファイルには保存しない）。
+  自動化では PASSPORT_TOKEN_FILE に自動化トークンを書いた 0600 のファイルを渡す（PASSPORT_TOKEN でも可。履歴に残りやすい）。
   接続先: --url / PASSPORT_URL、証明書: --ca / PASSPORT_CA（http:// は手元だけ。ほかは --allow-http が要る）
   秘密を出したことは、サーバーの監査ログに残る。`;
 

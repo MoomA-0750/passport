@@ -87,7 +87,8 @@ eval "$(bin/passport ssh-agent -k)"       # 止める
 
 ## CLI と自動化トークン
 
-`bin/passport` は Node の標準ライブラリだけで動く。サーバーと同じリポジトリを手元に置くか、このファイルだけをコピーして使う。
+`bin/passport` は Node の標準ライブラリだけで動く。サーバーと同じリポジトリを手元に置くか、
+`bin/passport` だけをコピーして使う（SSH エージェントも使うなら `lib/sshagent.js` と `lib/sshkeys.js` も、`bin/` と `lib/` の並びのままコピーする）。
 
 ```bash
 # 人: 対話ログイン（自己署名なら --ca で証明書を渡す）
@@ -107,14 +108,19 @@ export PGPASSWORD="$(bin/passport read '本番/DB')"
 Vault を選び、期限（最長1年）を決める。発行できるのは、選んだ Vault すべての owner。
 
 ```bash
+# トークンは 0600 のファイルに置いて渡す（コマンドラインに書くとシェルの履歴に残る）
+install -m 600 /dev/null ~/.config/passport/deploy.token && vi ~/.config/passport/deploy.token
 PASSPORT_URL=https://passport.example.local PASSPORT_CA=/etc/passport/ca.crt \
-PASSPORT_TOKEN=pp_... bin/passport read "本番/DB"
+PASSPORT_TOKEN_FILE=~/.config/passport/deploy.token bin/passport read "本番/DB"
 ```
 
+- 発行するときに、自分のパスワードをもう一度入れる
 - トークンでできるのは、選んだ Vault の読み出しだけ（書き込み・ほかの Vault・管理はできない）
+- 発行した人がパスワードを変える・管理者にリセットされる・無効化されると、その人のトークンは全部失効する
 - 発行した人が、その Vault の owner でなくなる・無効化されると、トークンも使えなくなる
 - 読み出しはトークンの名前付きで監査ログに残る。管理画面の「自動化トークン」で全部を見て失効させられる
 - 使わないなら `passport.ini` の `[cli] enabled = off`（人の CLI）/ `tokens = off`（自動化トークン）で止める
+  （`enabled = off` は利便のスイッチで、境界ではない。docs/crypto.md を読む）
 
 ## Chrome 拡張
 
@@ -325,7 +331,14 @@ systemctl start passport
 ```
 
 起動時に、鍵の世代とデータの状態を点検する。合わなければ起動を止め、理由を出す
-（`journalctl -u passport`）。
+（`journalctl -u passport`）。Vault が共有先にしているグループが見つからないときは、起動は止めずに警告を出す。
+
+**古いバックアップを戻すと、そのあとの変更も巻き戻る。** 失効させた自動化トークン、グループから外した人、
+変えたパスワードも元に戻り、その記録（監査ログ）も `data/` の中なので一緒に巻き戻る。戻したら次を確かめる:
+
+- 管理画面の「自動化トークン」で、戻した時点より後に失効させたはずのものを失効させ直す
+- グループと Vault のメンバーを見直す
+- 手がかりは、退避した `data.before-restore/audit/` に残っている
 
 ### systemd で動かす
 
@@ -454,7 +467,19 @@ node server.js
 | `PASSPORT_MASTER_KEY_FILE` | マスターキーのファイル |
 | `PASSPORT_MASTER_PASSPHRASE` | パスフレーズ運用（キーファイルより優先） |
 | `PASSPORT_CONFIG` | 設定ファイルの場所 |
+| `PASSPORT_CLI` / `PASSPORT_AUTOMATION_TOKENS` | `[cli] enabled` / `tokens` の上書き（on / off） |
 | `DEBUG=passport:*` | 詳細ログ（`passport:auth`、`passport:crypto` などで絞れる） |
+
+CLI（`bin/passport`）が読む環境変数:
+
+| 変数 | 意味 |
+|---|---|
+| `PASSPORT_URL` / `PASSPORT_CA` | 接続先と、自己署名の証明書（`--url` / `--ca` と同じ） |
+| `PASSPORT_TOKEN_FILE` | 自動化トークンを書いた 0600 のファイル（勧める） |
+| `PASSPORT_TOKEN` | 自動化トークンそのもの（シェルの履歴に残りやすい） |
+| `PASSPORT_ALLOW_HTTP=1` | 手元以外への `http://` を許す（`--allow-http` と同じ） |
+| `XDG_CONFIG_HOME` | 設定とセッションの置き場所（既定は `~/.config/passport/`） |
+| `SSH_AGENT_PID` | `passport ssh-agent -k` が止める相手 |
 
 ## 権限
 

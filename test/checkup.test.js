@@ -56,7 +56,9 @@ test('準備', () => {
   const add = (vault, actor, key, input) => { ids[key] = items.create(vault.id, input, { actor: actor.id }).id; };
   add(aliceVault, alice, 'weak', { title: '弱い', secrets: { password: 'abc123' } });
   add(aliceVault, alice, 'reuseA', { title: '使い回しA', secrets: { password: SHARED } });
+  add(aliceVault, alice, 'reuseA2', { title: '使い回しA2', secrets: { password: SHARED } });
   add(sharedVault, bob, 'reuseB', { title: '使い回しB', secrets: { password: SHARED } });
+  add(sharedVault, bob, 'reuseB2', { title: '使い回しB2', secrets: { password: SHARED } });
   // アリスが見られない Vault に、アリスのと同じパスワード
   add(bobVault, bob, 'hiddenSame', { title: 'ボブだけの同じ値', secrets: { password: SHARED } });
   add(bobVault, bob, 'hiddenWeak', { title: 'ボブだけの弱い値', secrets: { password: 'password' } });
@@ -101,9 +103,13 @@ test('点検: 弱い・使い回し・古いを見つける', () => {
   assert.ok(result.due.some((d) => d.itemId === ids.rotation));
   assert.ok(!result.weak.some((w) => w.itemId === ids.fine));
 
+  // 同じ Vault の中の使い回しは見つける
   const group = result.reused.find((g) => g.some((r) => r.itemId === ids.reuseA));
   assert.ok(group, '使い回しが見つからない');
-  assert.deepStrictEqual(group.map((r) => r.itemId).sort(), [ids.reuseA, ids.reuseB].sort());
+  assert.deepStrictEqual(group.map((r) => r.itemId).sort(), [ids.reuseA, ids.reuseA2].sort());
+  // Vault をまたいだ一致は出さない（推測した値を置いて、ほかの Vault の値と同じかを確かめる道具にしない）
+  assert.ok(result.reused.every((g) => new Set(g.map((r) => r.vaultId)).size === 1), 'Vault をまたいだ一致が出ている');
+  assert.ok(!result.reused.some((g) => g.some((r) => r.itemId === ids.reuseA) && g.some((r) => r.itemId === ids.reuseB)));
 });
 
 test('点検: 見られない Vault のアイテムとの一致・弱さは出ない', () => {
@@ -135,9 +141,10 @@ test('点検: Vault ごとに監査ログに残り、owner の履歴に出る（
   const vaultIds = [...new Set(entries.map((e) => e.vaultId))].sort();
   assert.deepStrictEqual(vaultIds, [aliceVault.id, sharedVault.id].sort());
   const shared = entries.find((e) => e.vaultId === sharedVault.id);
-  assert.match(shared.note, new RegExp(`使い回しB\\(${ids.reuseB.slice(0, 8)}\\)`));
+  // 使い回しは ID を切り詰めずに全部書く（長いタイトルのおとりで押し出されないように）
+  assert.ok(shared.note.includes(ids.reuseB) && shared.note.includes(ids.reuseB2), shared.note);
   // 共有 Vault の記録に、アリスの別の Vault のアイテム（使い回しA）は載らない
-  assert.ok(!entries.filter((e) => e.vaultId === sharedVault.id).some((e) => /使い回しA/.test(e.note)));
+  assert.ok(!entries.filter((e) => e.vaultId === sharedVault.id).some((e) => e.note.includes(ids.reuseA)));
   // 共有 Vault の owner（ボブ）は、アリスが点検したことを自分の履歴で見られる
   assert.ok(activity.forUser(bob.id).some((e) => e.event === 'vault.checkup' && e.relation === 'vault' && e.actorName === 'alice'));
   // 見られないボブの Vault には記録しない

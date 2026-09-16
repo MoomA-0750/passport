@@ -46,7 +46,9 @@ const counts = {
   users: countJson(path.join(dataDir, 'users')),
   vaults: vaultIds.length,
   items: vaultIds.reduce((sum, id) => sum + countJson(path.join(vaultsDir, id, 'items')), 0),
-  trashed: vaultIds.reduce((sum, id) => sum + countJson(path.join(vaultsDir, id, 'trash')), 0)
+  trashed: vaultIds.reduce((sum, id) => sum + countJson(path.join(vaultsDir, id, 'trash')), 0),
+  groups: countJson(path.join(dataDir, 'groups')),
+  tokens: countJson(path.join(dataDir, 'tokens'))
 };
 
 fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
@@ -80,7 +82,7 @@ const manifest = {
 fs.writeFileSync(`${archive}.json`, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 
 console.log(`バックアップを作りました: ${archive}`);
-console.log(`  ユーザー ${counts.users} / Vault ${counts.vaults} / アイテム ${counts.items} / ゴミ箱 ${counts.trashed}`);
+console.log(`  ユーザー ${counts.users} / Vault ${counts.vaults} / アイテム ${counts.items} / ゴミ箱 ${counts.trashed} / グループ ${counts.groups} / 自動化トークン ${counts.tokens}`);
 console.log(`  鍵の指紋: ${keyFingerprint || '(まだ記録されていません。一度サーバーを起動してください)'}`);
 console.log(`  SHA-256:  ${sha256}`);
 console.log('');

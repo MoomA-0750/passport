@@ -224,3 +224,20 @@ test('壊れたグループのファイルは読み飛ばし、権限は与え�
   assert.strictEqual(vaults.roleOf(vaults.get(vault.id), bob.id), null);
   assert.ok(vaults.listForUser(owner.id).some((v) => v.id === vault.id), '持ち主の一覧まで止まってしまう');
 });
+
+test('監査ログに書けないときは、グループに人を入れない・Vault に足さない（記録の無い権限の付与を作らない）', () => {
+  if (process.getuid && process.getuid() === 0) return;
+  const g = groups.create({ name: '監査の確認', actor: admin.id });
+  const auditDir = path.join(process.env.PASSPORT_DATA_DIR, 'audit');
+  const files = fs.readdirSync(auditDir);
+  for (const f of files) fs.chmodSync(path.join(auditDir, f), 0o400);
+  try {
+    assert.throws(() => groups.addMember(g.id, { userId: alice.id, actor: admin.id }), /監査ログを書けない/);
+    assert.deepStrictEqual(groups.get(g.id).members, []);
+    assert.throws(() => vaults.addGroup(vault.id, { groupId: g.id, role: 'viewer', actor: owner.id }), /監査ログを書けない/);
+    assert.ok(!(vaults.get(vault.id).groups || []).some((x) => x.groupId === g.id));
+    assert.throws(() => vaults.addMember(vault.id, { userId: bob.id, role: 'viewer', actor: owner.id }), /監査ログを書けない/);
+  } finally {
+    for (const f of files) fs.chmodSync(path.join(auditDir, f), 0o600);
+  }
+});

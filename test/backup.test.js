@@ -94,3 +94,13 @@ test('確かめる: 運ぶ途中で壊れたバックアップを見分ける', 
   assert.notStrictEqual(run.status, 0);
   assert.match(run.stderr, /作ったときと違います/);
 });
+
+test('確かめる: グループのファイルが壊れていたら「戻せる」と言わない', { skip: !hasTar }, () => {
+  fs.mkdirSync(path.join(DATA, 'groups'), { recursive: true });
+  fs.writeFileSync(path.join(DATA, 'groups', 'broken.json'), '{ broken');
+  execFileSync('node', ['bin/backup.js', path.join(TMP, 'b2')], { cwd: REPO, env, encoding: 'utf8' });
+  const second = fs.readdirSync(path.join(TMP, 'b2')).filter((n) => n.endsWith('.tar.gz')).map((n) => path.join(TMP, 'b2', n))[0];
+  const run = spawnSync('node', ['bin/verify-backup.js', second, '--key', KEY], { cwd: REPO, encoding: 'utf8' });
+  assert.notStrictEqual(run.status, 0);
+  assert.match(run.stderr, /壊れた JSON: groups\/broken\.json/);
+});

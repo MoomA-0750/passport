@@ -642,7 +642,8 @@
     if (offer.existingItemId) {
       const note = document.createElement('div');
       note.className = 'bar-user';
-      note.textContent = `既に「${offer.existingTitle}」として登録があります。パスワードを新しいものに差し替えます。`;
+      note.textContent = `Vault「${offer.existingVaultName || '?'}」に「${offer.existingTitle}」として登録があります。`
+        + 'このアイテムのパスワードを新しいものに差し替えます（その Vault に入っている人は、新しいパスワードを見られます）。';
       body.append(note);
     } else {
       const titleLabel = document.createElement('label');

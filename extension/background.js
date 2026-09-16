@@ -327,7 +327,10 @@ async function handleMessage(message, sender) {
           vaults,
           existingItemId: existing ? existing.id : null,
           existingVaultId: existing ? existing.vaultId : null,
-          existingTitle: existing ? existing.title : null
+          existingTitle: existing ? existing.title : null,
+          // どの Vault に書き込むかを必ず見せる。ほかの人に共有された Vault のアイテムに、
+          // 自分の本物のパスワードを書き込ませないため（outer gate の横断レビューで指摘）
+          existingVaultName: existing ? (existing.vaultName || null) : null
         }
       };
     }
