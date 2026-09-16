@@ -5,9 +5,12 @@
 // 金庫の中身はここに溜めない。service worker は止まったり動いたりするので、
 // 秘密の置き場には向かない。必要なときにサーバーへ取りに行く。
 
-import { clearToken, getSettings, api, ApiError } from './api.js';
+import { clearToken, getSettings, saveSettings, api, ApiError } from './api.js';
 
 const INLINE_SCRIPT_ID = 'passport-inline';
+const PENDING_KEY = 'passportPendingSave';
+// 本人が決めるまでの猶予。過ぎたら捨てる。
+const PENDING_TTL_MS = 2 * 60 * 1000;
 
 // --- content script の登録 ---------------------------------------------------
 
@@ -60,6 +63,7 @@ async function syncInlineScripts() {
 chrome.runtime.onStartup.addListener(async () => {
   // ブラウザを立ち上げ直したらロックされた状態から始める
   await clearToken();
+  await clearAllPending();
   await syncInlineScripts();
 });
 
@@ -72,6 +76,59 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.permissions.onAdded.addListener(() => { void syncInlineScripts(); });
 chrome.permissions.onRemoved.addListener(() => { void syncInlineScripts(); });
+
+// --- ログインを捉えたときの預かり ---------------------------------------------
+//
+// ページは送信直後に遷移して消えるので、本人が「保存する」を押すまでの間、
+// 捉えた値をどこかに置いておく必要がある。
+//
+// 置き場は chrome.storage.session。ディスクには残らず、ブラウザを閉じれば消える。
+// そのうえで 2分の期限を付け、保存か却下が決まった時点で消す。
+// service worker は止まることがあるので、変数ではなくここに置く。
+
+async function putPending(tabId, data) {
+  const store = await chrome.storage.session.get(PENDING_KEY);
+  const pending = store[PENDING_KEY] || {};
+  pending[tabId] = { ...data, at: Date.now() };
+  await chrome.storage.session.set({ [PENDING_KEY]: pending });
+}
+
+async function takePending(tabId, { remove = false } = {}) {
+  const store = await chrome.storage.session.get(PENDING_KEY);
+  const pending = store[PENDING_KEY] || {};
+
+  // 期限切れはこの機会に片付ける
+  let changed = false;
+  for (const [key, value] of Object.entries(pending)) {
+    if (Date.now() - value.at > PENDING_TTL_MS) {
+      delete pending[key];
+      changed = true;
+    }
+  }
+
+  const entry = pending[tabId] || null;
+  if (entry && remove) {
+    delete pending[tabId];
+    changed = true;
+  }
+  if (changed) await chrome.storage.session.set({ [PENDING_KEY]: pending });
+  return entry;
+}
+
+async function clearAllPending() {
+  await chrome.storage.session.remove(PENDING_KEY);
+}
+
+// 「このサイトでは聞かない」の一覧。秘密ではないので local でよい。
+async function getIgnoredHosts() {
+  const settings = await getSettings();
+  return settings.ignoredHosts || [];
+}
+
+async function addIgnoredHost(host) {
+  const hosts = await getIgnoredHosts();
+  if (!hosts.includes(host)) await saveSettings({ ignoredHosts: [...hosts, host] });
+}
 
 // --- content script からの問い合わせ -----------------------------------------
 
@@ -133,6 +190,107 @@ async function handleMessage(message, sender) {
       return { username: target.username || '', password, totp };
     }
 
+    // ログインを捉えた。まだ何も保存しない。預かるだけ。
+    if (message.type === 'save:captured') {
+      const settings = await getSettings();
+      if (settings.saveOffer === false) return { ok: false };
+      if ((await getIgnoredHosts()).includes(host)) return { ok: false };
+      if (!sender.tab) return { ok: false };
+
+      await putPending(sender.tab.id, {
+        host,
+        username: String(message.username || '').slice(0, 128),
+        password: String(message.password || ''),
+        suggestedTitle: String(message.title || '').slice(0, 128) || host
+      });
+      return { ok: true };
+    }
+
+    // 遷移した先（または同じページ）から「預かっているものはある?」
+    if (message.type === 'save:pending') {
+      if (!sender.tab) return { offer: null };
+      const entry = await takePending(sender.tab.id);
+      if (!entry) return { offer: null };
+
+      // 捉えたのと同じサイトのときだけ出す。
+      // 別のサイトへ遷移した先で、よそのパスワードの保存を勧めない。
+      if (entry.host !== host) return { offer: null };
+
+      let vaults = [];
+      let existing = null;
+      try {
+        const vaultList = await api.vaults();
+        // 書き込める Vault だけを選べるようにする
+        vaults = vaultList.vaults.filter((v) => ['editor', 'owner'].includes(v.role));
+        const { items } = await api.match(host);
+        existing = items.find((item) => (item.username || '') === entry.username) || null;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) return { offer: null, locked: true };
+        throw err;
+      }
+      if (vaults.length === 0 && !existing) return { offer: null };
+
+      return {
+        offer: {
+          host: entry.host,
+          username: entry.username,
+          suggestedTitle: entry.suggestedTitle,
+          vaults,
+          existingItemId: existing ? existing.id : null,
+          existingVaultId: existing ? existing.vaultId : null,
+          existingTitle: existing ? existing.title : null
+        }
+      };
+    }
+
+    // 本人が決めた
+    if (message.type === 'save:decide') {
+      if (!sender.tab) return { error: 'タブが分かりません' };
+
+      if (message.action === 'never') {
+        await addIgnoredHost(host);
+        await takePending(sender.tab.id, { remove: true });
+        return { ok: true };
+      }
+      if (message.action !== 'save') {
+        await takePending(sender.tab.id, { remove: true });
+        return { ok: true };
+      }
+
+      const entry = await takePending(sender.tab.id);
+      if (!entry) return { error: '預かっていた内容が期限切れです。もう一度ログインしてください' };
+      if (entry.host !== host) return { error: 'このページでは保存できません' };
+
+      const { items } = await api.match(host);
+      const existing = items.find((item) => (item.username || '') === entry.username) || null;
+
+      try {
+        if (existing) {
+          await api.updateItem(existing.vaultId, existing.id, {
+            version: existing.version,
+            secrets: { password: entry.password }
+          });
+          await takePending(sender.tab.id, { remove: true });
+          return { ok: true, updated: true };
+        }
+
+        const vaultId = message.vaultId;
+        if (!vaultId) return { error: '保存先が選ばれていません' };
+        await api.createItem(vaultId, {
+          type: 'login',
+          title: String(message.title || entry.suggestedTitle || host).slice(0, 128),
+          username: entry.username,
+          urls: `https://${host}`,
+          secrets: { password: entry.password }
+        });
+        await takePending(sender.tab.id, { remove: true });
+        return { ok: true, updated: false };
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) return { error: 'Passport がロックされています' };
+        throw err;
+      }
+    }
+
     return { error: '知らない要求です' };
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
@@ -156,17 +314,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // ロックしたとき。開いているページのメニューを閉じさせ、持っている候補を捨てさせる
   if (message.type === 'inline:locked') {
-    notifyAllTabs().then(() => sendResponse({ ok: true }), (err) => sendResponse({ error: err.message }));
+    // ロックしたら、預かっている平文も捨てる
+    Promise.all([clearAllPending(), notifyAllTabs()])
+      .then(() => sendResponse({ ok: true }), (err) => sendResponse({ error: err.message }));
     return true;
   }
 
-  if (!message.type.startsWith('inline:')) return false;
+  if (!message.type.startsWith('inline:') && !message.type.startsWith('save:')) return false;
   handleMessage(message, sender).then(sendResponse, (err) => sendResponse({ error: err.message }));
   return true; // 非同期で返す
 });
 
 // 開いているタブへ「捨てて」と伝える。
 // content script が居ないタブでは届かないので、失敗は無視してよい。
+// タブを閉じたら、そのタブの預かりは捨てる
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await takePending(tabId, { remove: true });
+});
+
 async function notifyAllTabs() {
   const tabs = await chrome.tabs.query({});
   await Promise.all(tabs.map((tab) => (

@@ -46,6 +46,25 @@
     <p id="inline-status" class="hint small" style="margin-bottom:0"></p>
   </div>
 
+  <h2>ログインの保存を勧める</h2>
+  <div class="box">
+    <label class="toggle">
+      <input id="save-offer" type="checkbox" checked>
+      <span>まだ登録の無いサイトでログインしたら聞く</span>
+    </label>
+    <p class="hint small">
+      ログインの送信を見つけたときに「保存しますか」と出します。
+      本人が決めるまでの間だけ、入力された値を預かります（ディスクには残さず、
+      2分で期限切れ、ロックすると捨てます）。この機能は、入力欄のそばのメニューを
+      許可したサイトでだけ動きます。
+    </p>
+    <div id="ignored-wrap" hidden>
+      <label>聞かないことにしたサイト</label>
+      <ul id="ignored-list" style="margin:0 0 .5rem; padding-left:1.2rem; font-size:.8rem"></ul>
+      <button id="clear-ignored" class="button small" type="button">この一覧を空にする</button>
+    </div>
+  </div>
+
   <h2>この拡張の ID</h2>
   <div class="box">
     <code id="extension-id">—</code>

@@ -11,6 +11,8 @@
 //   ・メニューは closed な Shadow DOM の中に作る。ページ側の CSS と JS から触らせない
 //   ・埋めるのは isTrusted な操作だけ。ページが script から click() を投げても動かない
 //   ・勝手に送信しない
+//   ・まだ登録の無いサイトでログインされたら「保存しますか」と聞く。
+//     捉えた値はここには残さず background へ渡し、本人が決めるまでの間だけ預ける
 
 (() => {
   'use strict';
@@ -30,6 +32,7 @@
   let locked = false;
   let dismissedFor = null;    // このフィールドでは出さない、という一時的な記憶
   let busy = false;
+  let lastCaptureKey = '';    // 同じ内容を何度も送らないための目印
 
   const CACHE_MS = 30 * 1000;
 
@@ -169,6 +172,43 @@
     }
     .note { padding: .5rem .6rem; color: #6b7680; font-size: .76rem; }
     .note.error { color: #d6336c; }
+
+    /* 「保存しますか」のバー */
+    .bar {
+      position: fixed;
+      top: 12px; right: 12px;
+      z-index: 2147483647;
+      width: 20rem; max-width: calc(100vw - 24px);
+      background: #fff; color: #1f2933;
+      border: 1px solid #dee2e6; border-radius: .5rem;
+      box-shadow: 0 .5rem 1.5rem rgba(0,0,0,.22);
+      font: 13px/1.45 system-ui, -apple-system, "Noto Sans JP", sans-serif;
+      overflow: hidden;
+    }
+    .bar-body { padding: .6rem .7rem; }
+    .bar-title { font-weight: 600; margin-bottom: .2rem; }
+    .bar-user { color: #6b7680; font-size: .78rem; word-break: break-all; margin-bottom: .5rem; }
+    .bar label { display: block; font-size: .72rem; color: #6b7680; margin-bottom: .15rem; }
+    .bar input, .bar select {
+      width: 100%; box-sizing: border-box; font: inherit; color: inherit;
+      padding: .3rem .4rem; margin-bottom: .45rem;
+      background: #fff; border: 1px solid #dee2e6; border-radius: .25rem;
+    }
+    .bar-actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+    .bar button {
+      font: inherit; padding: .3rem .6rem; border-radius: .25rem; cursor: pointer;
+      border: 1px solid #dee2e6; background: transparent; color: inherit;
+    }
+    .bar button.primary { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+    .bar button.link { border-color: transparent; color: #6b7680; padding-left: .2rem; padding-right: .2rem; }
+    .bar button:hover { filter: brightness(1.06); }
+    .bar-result { padding: .6rem .7rem; }
+    @media (prefers-color-scheme: dark) {
+      .bar { background: #1b1f24; color: #e6e9ec; border-color: #333b44; }
+      .bar input, .bar select { background: #12161a; border-color: #333b44; }
+      .bar button { border-color: #333b44; }
+      .bar-user, .bar label, .bar button.link { color: #9aa4ad; }
+    }
     @media (prefers-color-scheme: dark) {
       .menu { background: #1b1f24; color: #e6e9ec; border-color: #333b44; }
       .row { border-top-color: #2a3139; }
@@ -363,6 +403,230 @@
     hideMenu();
   }
 
+  // --- ログインの検知 --------------------------------------------------------
+
+  // 送信されようとしている入力から、ユーザー名とパスワードを拾う。
+  // ここで拾った値は変数に残さず、そのまま background へ渡す。
+  function captureFrom(scopeElement) {
+    const scope = scopeElement || document;
+    const inputs = [...scope.querySelectorAll('input')].filter(isVisible);
+    const passwords = inputs.filter(isPasswordField).filter((el) => el.value);
+    if (passwords.length === 0) return null;
+
+    // パスワード欄が2つ以上あって値が違うなら、新規登録か変更の画面。
+    // どちらも「このサイトのログイン」として保存してよいものではないので見送る。
+    if (passwords.length > 1) {
+      const values = new Set(passwords.map((el) => el.value));
+      if (values.size > 1) return null;
+    }
+
+    const password = passwords[0].value;
+    if (password.length < 4) return null;
+
+    const texts = inputs.filter((el) => ['text', 'email', 'tel', ''].includes(el.type));
+    const otpLike = (el) => /otp|totp|2fa|mfa|one.?time|verification|authenticator|ワンタイム|認証コード/.test(hay(el));
+    const named = texts.filter((el) => !otpLike(el) && el.value);
+    const passwordTop = passwords[0].getBoundingClientRect().top;
+    const usernameField = named.find((el) => /user|login|account|email|mail|id\b|ユーザー|メール|アカウント/.test(hay(el)))
+      || named.filter((el) => el.getBoundingClientRect().top <= passwordTop).pop()
+      || named[0];
+
+    return {
+      username: usernameField ? usernameField.value : '',
+      password,
+      title: (document.title || '').trim().slice(0, 64)
+    };
+  }
+
+  async function capture(scopeElement) {
+    const captured = captureFrom(scopeElement);
+    if (!captured) return;
+
+    // 同じ内容を続けて送らない（submit と click の両方が拾ったときなど）
+    const key = `${captured.username}\u0000${captured.password.length}`;
+    if (key === lastCaptureKey) return;
+    lastCaptureKey = key;
+
+    await ask({ type: 'save:captured', ...captured });
+    // 遷移しない作りのページもあるので、少し待ってから自分で聞きに行く
+    setTimeout(() => { void offerIfPending(); }, 1200);
+  }
+
+  document.addEventListener('submit', (event) => {
+    if (!event.isTrusted) return;
+    void capture(event.target);
+  }, true);
+
+  // submit を出さない作りのページ向け。ログインらしいボタンの押下でも拾う。
+  document.addEventListener('click', (event) => {
+    if (!event.isTrusted) return;
+    const button = event.target.closest('button, input[type="submit"], input[type="button"], [role="button"]');
+    if (!button) return;
+    const text = `${button.textContent || ''} ${button.value || ''} ${button.id} ${button.name}`.toLowerCase();
+    const looksLikeSubmit = button.type === 'submit'
+      || /log.?in|sign.?in|ログイン|サインイン|認証|送信/.test(text);
+    if (!looksLikeSubmit) return;
+    void capture(button.form || button.closest('form') || document);
+  }, true);
+
+  document.addEventListener('keydown', (event) => {
+    if (!event.isTrusted || event.key !== 'Enter') return;
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement)) return;
+    if (!isPasswordField(field) && !isUsernameField(field)) return;
+    void capture(field.form || field.closest('form') || document);
+  }, true);
+
+  // --- 「保存しますか」のバー -------------------------------------------------
+
+  function hideBar() {
+    if (!shadow) return;
+    const bar = shadow.querySelector('.bar');
+    if (bar) bar.remove();
+  }
+
+  function renderBar(offer) {
+    const root = ensureShadow();
+    hideBar();
+
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    const label = document.createElement('span');
+    label.textContent = '🔐 Passport';
+    const close = document.createElement('button');
+    close.className = 'close';
+    close.type = 'button';
+    close.textContent = '×';
+    close.title = '閉じる';
+    close.addEventListener('click', (event) => {
+      if (!event.isTrusted) return;
+      void decide('dismiss');
+    });
+    head.append(label, close);
+
+    const body = document.createElement('div');
+    body.className = 'bar-body';
+
+    const title = document.createElement('div');
+    title.className = 'bar-title';
+    title.textContent = offer.existingItemId
+      ? 'このサイトの登録を更新しますか？'
+      : 'このサイトのログイン情報を保存しますか？';
+
+    const user = document.createElement('div');
+    user.className = 'bar-user';
+    user.textContent = `${offer.host}${offer.username ? ` / ${offer.username}` : ''}`;
+
+    body.append(title, user);
+
+    let titleInput = null;
+    let vaultSelect = null;
+
+    if (offer.existingItemId) {
+      const note = document.createElement('div');
+      note.className = 'bar-user';
+      note.textContent = `既に「${offer.existingTitle}」として登録があります。パスワードを新しいものに差し替えます。`;
+      body.append(note);
+    } else {
+      const titleLabel = document.createElement('label');
+      titleLabel.textContent = 'タイトル';
+      titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.value = offer.suggestedTitle || offer.host;
+      titleInput.maxLength = 128;
+
+      const vaultLabel = document.createElement('label');
+      vaultLabel.textContent = '保存先';
+      vaultSelect = document.createElement('select');
+      for (const vault of offer.vaults) {
+        const option = document.createElement('option');
+        option.value = vault.id;
+        option.textContent = `${vault.icon || ''} ${vault.name}`.trim();
+        vaultSelect.append(option);
+      }
+
+      body.append(titleLabel, titleInput, vaultLabel, vaultSelect);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'bar-actions';
+
+    const saveButton = document.createElement('button');
+    saveButton.className = 'primary';
+    saveButton.type = 'button';
+    saveButton.textContent = offer.existingItemId ? '更新する' : '保存する';
+    saveButton.addEventListener('click', (event) => {
+      if (!event.isTrusted) return;
+      saveButton.disabled = true;
+      void decide('save', {
+        vaultId: vaultSelect ? vaultSelect.value : null,
+        title: titleInput ? titleInput.value.trim() : null
+      });
+    });
+
+    const laterButton = document.createElement('button');
+    laterButton.type = 'button';
+    laterButton.textContent = '今回はしない';
+    laterButton.addEventListener('click', (event) => {
+      if (!event.isTrusted) return;
+      void decide('dismiss');
+    });
+
+    const neverButton = document.createElement('button');
+    neverButton.className = 'link';
+    neverButton.type = 'button';
+    neverButton.textContent = 'このサイトでは聞かない';
+    neverButton.addEventListener('click', (event) => {
+      if (!event.isTrusted) return;
+      void decide('never');
+    });
+
+    actions.append(saveButton, laterButton, neverButton);
+    body.append(actions);
+    bar.append(head, body);
+    root.append(bar);
+    return bar;
+  }
+
+  function showBarResult(text, isError = false) {
+    if (!shadow) return;
+    const bar = shadow.querySelector('.bar');
+    if (!bar) return;
+    const body = bar.querySelector('.bar-body');
+    if (body) body.remove();
+    const result = document.createElement('div');
+    result.className = `bar-result${isError ? ' error' : ''}`;
+    result.textContent = text;
+    result.style.color = isError ? '#d6336c' : '';
+    bar.append(result);
+    if (!isError) setTimeout(hideBar, 2500);
+  }
+
+  async function decide(action, extra = {}) {
+    const response = await ask({ type: 'save:decide', action, ...extra });
+    if (action !== 'save') {
+      hideBar();
+      return;
+    }
+    if (response.error) {
+      showBarResult(response.error, true);
+      return;
+    }
+    // 保存したら、このサイトの候補は取り直す
+    candidates = null;
+    candidatesAt = 0;
+    showBarResult(response.updated ? '更新しました' : '保存しました');
+  }
+
+  async function offerIfPending() {
+    const response = await ask({ type: 'save:pending' });
+    if (!response || !response.offer) return;
+    renderBar(response.offer);
+  }
+
   // --- きっかけ -------------------------------------------------------------
 
   async function onFocus(event) {
@@ -418,6 +682,10 @@
       candidates = null;
       candidatesAt = 0;
       hideMenu();
+      hideBar();
     }
   });
+
+  // 送信のあと遷移した先で出す。読み込み直後に、預かっているものがないか聞く。
+  setTimeout(() => { void offerIfPending(); }, 600);
 })();

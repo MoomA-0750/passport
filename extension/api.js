@@ -134,6 +134,7 @@ export async function logout() {
 
 export const api = {
   me: () => call('/api/me'),
+  vaults: () => call('/api/vaults'),
   match: (host) => call(`/api/match?host=${encodeURIComponent(host)}`),
   search: (query) => call(`/api/search?q=${encodeURIComponent(query)}`),
   reveal: (vaultId, itemId, field, purpose = 'view') =>
@@ -141,5 +142,9 @@ export const api = {
       method: 'POST', body: { field, purpose }
     }),
   totp: (vaultId, itemId) =>
-    call(`/api/vaults/${vaultId}/items/${itemId}/totp`, { method: 'POST' })
+    call(`/api/vaults/${vaultId}/items/${itemId}/totp`, { method: 'POST' }),
+  createItem: (vaultId, item) =>
+    call(`/api/vaults/${vaultId}/items`, { method: 'POST', body: item }),
+  updateItem: (vaultId, itemId, patch) =>
+    call(`/api/vaults/${vaultId}/items/${itemId}`, { method: 'PUT', body: patch })
 };
