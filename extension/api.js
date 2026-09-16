@@ -135,7 +135,10 @@ export async function logout() {
 export const api = {
   me: () => call('/api/me'),
   vaults: () => call('/api/vaults'),
-  match: (host) => call(`/api/match?host=${encodeURIComponent(host)}`),
+  // scheme を渡すと、https で登録したものを http のページには出さない
+  match: (host, scheme = null) => call(
+    `/api/match?host=${encodeURIComponent(host)}${scheme ? `&scheme=${encodeURIComponent(scheme)}` : ''}`
+  ),
   search: (query) => call(`/api/search?q=${encodeURIComponent(query)}`),
   reveal: (vaultId, itemId, field, purpose = 'view') =>
     call(`/api/vaults/${vaultId}/items/${itemId}/reveal`, {

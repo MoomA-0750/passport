@@ -23,6 +23,7 @@ const TYPE_ICONS = { login: '🔑', server: '🖥️', card: '💳', note: '📝
 let activeTab = null;
 let currentHost = '';
 let currentOriginPattern = null;
+let currentScheme = null;
 
 function show(name) {
   for (const [key, el] of Object.entries(views)) el.hidden = key !== name;
@@ -161,7 +162,7 @@ async function loadPage() {
   }
 
   try {
-    const { items } = await api.match(currentHost);
+    const { items } = await api.match(currentHost, currentScheme);
     renderList('page-items', 'page-empty', items, {
       emptyText: 'このサイトに使えるものはありません。上の欄から探すか、金庫に URL を登録してください。'
     });
@@ -176,7 +177,7 @@ async function fillItem(item) {
   if (!activeTab) return;
   try {
     status('取り出しています…');
-    const { value: password } = await api.reveal(item.vaultId, item.id, 'password', 'copy');
+    const { value: password } = await api.reveal(item.vaultId, item.id, 'password', 'fill');
 
     let totp = null;
     if (item.secrets && item.secrets.totp) {
@@ -340,6 +341,11 @@ async function start() {
 
   [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   currentHost = activeTab ? hostOfUrl(activeTab.url) : '';
+  try {
+    currentScheme = activeTab ? new URL(activeTab.url).protocol.replace(/:$/, '') : null;
+  } catch {
+    currentScheme = null;
+  }
   currentOriginPattern = activeTab ? originPatternOfUrl(activeTab.url) : null;
 
   // 金庫の画面そのものにはメニューを出さないので、勧めない

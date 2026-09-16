@@ -539,12 +539,25 @@
     };
   }
 
+  // FNV-1a。同じ入力かどうかの目安にだけ使う（秘密の保護には使わない）
+  function fingerprintOfText(text) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return `${text.length}:${hash.toString(16)}`;
+  }
+
   async function capture(scopeElement) {
     const captured = captureFrom(scopeElement);
     if (!captured) return;
 
     // 同じ内容を続けて送らない（submit と click の両方が拾ったときなど）
-    const key = `${captured.username}\u0000${captured.password.length}`;
+    // 以前はパスワードの「長さ」だけで比べていたので、同じ長さの別のパスワードへ変えて
+    // ログインし直すと2回目が捨てられ、更新を勧められなかった。
+    // 平文を変数に残さないよう、短いハッシュで比べる（暗号用途ではなく同一性の目安）。
+    const key = `${captured.username}\u0000${fingerprintOfText(captured.password)}`;
     if (key === lastCaptureKey) return;
     lastCaptureKey = key;
 

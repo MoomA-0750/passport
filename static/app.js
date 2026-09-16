@@ -650,7 +650,20 @@ async function submitItem(event) {
       await selectItem(item.vaultId, item.id);
     }
   } catch (err) {
-    showError('item-error', err.message);
+    if (err.status === 409 && editingItem) {
+      // 誰かが先に保存していた。以前は version を更新しないまま同じ 409 を返し続け、
+      // モーダルを閉じて開き直すしかなかった。最新の版を取り直し、入力はそのまま残す。
+      try {
+        const { item: latest } = await apiFetch(`/api/vaults/${editingItem.vaultId}/items/${editingItem.id}`);
+        editingItem = latest;
+        showError('item-error',
+          'ほかの人が先に保存していました。最新の内容に合わせたので、入力を確かめてもう一度保存してください');
+      } catch {
+        showError('item-error', err.message);
+      }
+    } else {
+      showError('item-error', err.message);
+    }
   } finally {
     button.disabled = false;
   }
@@ -966,6 +979,9 @@ function wire() {
         await showTotp();
       } else if (action === 'copy-totp') {
         if (state.revealed.totpCode === undefined) await showTotp();
+        // showTotp は失敗してもトーストを出して普通に戻るので、ここで確かめる。
+        // 以前はそのままコピーして、クリップボードに "undefined" が入り「コピーしました」まで出ていた。
+        if (typeof state.revealed.totpCode !== 'string') return;
         await copyToClipboard(state.revealed.totpCode);
         toast('コピーしました', 'success');
       } else if (action === 'edit-item') {

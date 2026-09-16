@@ -163,7 +163,7 @@ function sameUsername(item, username) {
 //
 // パスワードの照合はサーバー側でやってもらい、保管してある平文は受け取らない。
 async function classifyLogin(host, entry) {
-  const { items } = await api.match(host);
+  const { items } = await api.match(host, entry.scheme || null);
   const sameUser = items.filter((item) => sameUsername(item, entry.username));
   if (sameUser.length === 0) return { state: 'unknown', item: null };
 
@@ -194,12 +194,22 @@ function hostOfSender(sender) {
   }
 }
 
+function schemeOfSender(sender) {
+  const source = sender.origin || sender.url || '';
+  try {
+    return new URL(source).protocol.replace(/:$/, '');
+  } catch {
+    return null;
+  }
+}
+
 async function handleMessage(message, sender) {
   // 自分の拡張の中から来たものだけを相手にする
   if (!sender || sender.id !== chrome.runtime.id) {
     return { error: '受け付けられません' };
   }
   const host = hostOfSender(sender);
+  const scheme = schemeOfSender(sender);
   if (!host) return { error: 'このページでは使えません' };
 
   // 登録側で除外しているが、取りこぼしても金庫の画面には答えない。
@@ -215,7 +225,7 @@ async function handleMessage(message, sender) {
 
   try {
     if (message.type === 'inline:candidates') {
-      const { items } = await api.match(host);
+      const { items } = await api.match(host, scheme);
       return {
         locked: false,
         // 秘密は含まれていないが、拡張の画面で使う分だけに絞って渡す
@@ -235,11 +245,12 @@ async function handleMessage(message, sender) {
     if (message.type === 'inline:fill') {
       // 念のため、要求されたアイテムがこのホストの候補に入っているかを確かめる。
       // content script が別のアイテムIDを指してきても、関係ないものは渡さない。
-      const { items } = await api.match(host);
+      const { items } = await api.match(host, scheme);
       const target = items.find((i) => i.id === message.itemId && i.vaultId === message.vaultId);
       if (!target) return { error: 'このページでは使えないアイテムです' };
 
-      const { value: password } = await api.reveal(target.vaultId, target.id, 'password', 'copy');
+      // 監査ログで「コピー」と区別できるよう、入力に使ったことを伝える
+      const { value: password } = await api.reveal(target.vaultId, target.id, 'password', 'fill');
       let totp = null;
       if (target.secrets && target.secrets.totp) {
         try {
@@ -258,9 +269,18 @@ async function handleMessage(message, sender) {
       if (settings.saveOffer === false) return { ok: false };
       if ((await getIgnoredHosts()).includes(host)) return { ok: false };
       if (!sender.tab) return { ok: false };
+      // 保存の提案はいちばん外側のページからだけ受け付ける。
+      // 預かりはタブごとに1枠なので、広告などの iframe が自分のフォームで送信すると、
+      // 正規のページの預かりを上書きして提案を黙らせられた。
+      // （iframe の中のログインフォームでは保存を勧めない。入力のメニューは出る）
+      if (sender.frameId !== 0) return { ok: false };
+      // パスワードに長さの上限を付ける。ページが巨大な文字列を送って
+      // storage.session の枠を埋め、以後の提案を止めるのを防ぐ。
+      if (String(message.password || '').length > 1024) return { ok: false };
 
       await putPending(sender.tab.id, {
         host,
+        scheme,
         username: String(message.username || '').slice(0, 128),
         password: String(message.password || ''),
         suggestedTitle: String(message.title || '').slice(0, 128) || host
@@ -361,7 +381,9 @@ async function handleMessage(message, sender) {
           type: 'login',
           title: String(message.title || entry.suggestedTitle || host).slice(0, 128),
           username: entry.username,
-          urls: `https://${host}`,
+          // 捉えたページと同じスキームで登録する。https 固定にすると、http のページで保存したものが
+          // 次から「https の登録」として扱われ、そのページの候補に出なくなる（items.js の schemeOf）
+          urls: `${entry.scheme || scheme || 'https'}://${host}`,
           secrets: { password: entry.password }
         });
         await takePending(sender.tab.id, { remove: true });
